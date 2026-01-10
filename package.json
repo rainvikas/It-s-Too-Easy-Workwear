@@ -1,0 +1,32 @@
+{
+  "name": "it-s-too-easy-workwear",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev:server": "nodemon server/index.js",
+    "start:server": "node server/index.js",
+    "dev:user": "npm run dev --prefix client-user",
+    "build:user": "npm run build --prefix client-user",
+    "preview:user": "npm run preview --prefix client-user",
+    "dev:admin": "npm run dev --prefix client-admin",
+    "build:admin": "npm run build --prefix client-admin",
+    "preview:admin": "npm run preview --prefix client-admin"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^9.0.0",
+    "morgan": "^1.10.1",
+    "multer": "^2.0.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.11"
+  }
+}
