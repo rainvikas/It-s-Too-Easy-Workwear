@@ -6,6 +6,7 @@ const User = require('../models/User');
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET || 'devsecret';
 const ADMIN_KEY = process.env.ADMIN_KEY || 'changeme-admin';
+const SUPER_ADMIN_KEY = process.env.SUPER_ADMIN_KEY || 'changeme-superadmin';
 
 const signToken = (user) =>
   jwt.sign({ id: user._id, role: user.role, email: user.email, name: user.name }, JWT_SECRET, {
@@ -23,7 +24,12 @@ router.post('/signup', async (req, res) => {
       return res.status(409).json({ message: 'Email already registered' });
     }
     const passwordHash = await bcrypt.hash(password, 10);
-    const role = adminKey && adminKey === ADMIN_KEY ? 'admin' : 'user';
+    let role = 'user';
+    if (adminKey && adminKey === SUPER_ADMIN_KEY) {
+      role = 'superadmin';
+    } else if (adminKey && adminKey === ADMIN_KEY) {
+      role = 'admin';
+    }
     const user = await User.create({ name, email, passwordHash, role });
     const token = signToken(user);
     res.status(201).json({ token, user: { id: user._id, name: user.name, email: user.email, role } });

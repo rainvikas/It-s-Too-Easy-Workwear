@@ -5,13 +5,7 @@ const Product = require('../models/Product');
 
 const router = express.Router();
 
-// Simple auth middleware for admin-only operations
-const requireAdmin = (req, res, next) => {
-  if (!req.user || req.user.role !== 'admin') {
-    return res.status(403).json({ message: 'Admin access required' });
-  }
-  return next();
-};
+const requireAdmin = require('../middleware/requireAdmin');
 
 // Configure multer storage for local uploads
 const storage = multer.diskStorage({
@@ -30,14 +24,34 @@ const upload = multer({ storage });
 // POST /api/products - create product with optional image
 router.post('/', upload.single('image'), requireAdmin, async (req, res) => {
   try {
-    const { title, description, price, sizes, category, inStock } = req.body;
+    const {
+      sku,
+      title,
+      description,
+      price,
+      sizes,
+      category,
+      inStock,
+      quantity,
+      color,
+      status,
+      clientCountry,
+      clientTimezone,
+      clientLocale,
+      clientLat,
+      clientLng,
+    } = req.body;
     const imageUrl = req.file ? `/uploads/${req.file.filename}` : '';
 
     const product = new Product({
+      sku,
       title,
       description,
       price,
       category,
+      quantity: Number.isFinite(Number(quantity)) ? Number(quantity) : 0,
+      color,
+      status: status || (inStock === 'false' ? 'out-of-stock' : 'available'),
       inStock: inStock !== 'false', // default true
       sizes: Array.isArray(sizes)
         ? sizes
@@ -45,6 +59,13 @@ router.post('/', upload.single('image'), requireAdmin, async (req, res) => {
         ? sizes.split(',').map((s) => s.trim())
         : [],
       imageUrl,
+      clientMeta: {
+        country: clientCountry || '',
+        timezone: clientTimezone || '',
+        locale: clientLocale || '',
+        lat: clientLat ? Number(clientLat) : null,
+        lng: clientLng ? Number(clientLng) : null,
+      },
     });
 
     const saved = await product.save();
@@ -83,12 +104,17 @@ router.get('/:id', async (req, res) => {
 // PUT /api/products/:id - update product (with optional image)
 router.put('/:id', upload.single('image'), requireAdmin, async (req, res) => {
   try {
-    const { title, description, price, sizes, category, inStock } = req.body;
+    const { sku, title, description, price, sizes, category, inStock, quantity, color, status } =
+      req.body;
     const update = {
+      sku,
       title,
       description,
       price,
       category,
+      quantity: Number.isFinite(Number(quantity)) ? Number(quantity) : 0,
+      color,
+      status: status || (inStock === 'false' ? 'out-of-stock' : 'available'),
       inStock: inStock !== 'false',
     };
     if (sizes) {
