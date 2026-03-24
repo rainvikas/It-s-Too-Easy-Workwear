@@ -26,8 +26,21 @@ router.get('/summary', requireAdmin, async (_req, res) => {
       Customer.countDocuments(),
       Order.countDocuments(),
       Order.aggregate([
-        { $match: { paymentStatus: 'Paid' } },
-        { $group: { _id: null, total: { $sum: '$total' } } },
+        {
+          $match: {
+            $or: [{ paymentCapturedAt: { $ne: null } }, { paymentStatus: 'Paid' }],
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            total: {
+              $sum: {
+                $cond: [{ $gt: ['$paymentAmount', 0] }, '$paymentAmount', { $multiply: ['$total', 1.1] }],
+              },
+            },
+          },
+        },
       ]),
     ]);
     const totalRevenue = revenueAgg?.[0]?.total || 0;
@@ -41,14 +54,19 @@ router.get('/summary', requireAdmin, async (_req, res) => {
 router.get('/sales', requireAdmin, async (_req, res) => {
   try {
     const months = buildMonthKeys();
-    const orders = await Order.find().select('total createdAt paymentStatus').lean();
+    const orders = await Order.find().select('total paymentAmount paymentCapturedAt paymentStatus createdAt').lean();
     const totals = months.reduce((acc, m) => ({ ...acc, [m.key]: 0 }), {});
     orders.forEach((order) => {
-      if (order.paymentStatus !== 'Paid' || !order.createdAt) return;
-      const created = new Date(order.createdAt);
-      if (Number.isNaN(created.getTime())) return;
-      const key = `${created.getFullYear()}-${String(created.getMonth() + 1).padStart(2, '0')}`;
-      if (key in totals) totals[key] += order.total;
+      const isCaptured = Boolean(order.paymentCapturedAt);
+      const isManualPaid = String(order.paymentStatus || '') === 'Paid';
+      if (!isCaptured && !isManualPaid) return;
+      const eventDate = new Date(isCaptured ? order.paymentCapturedAt : order.createdAt);
+      if (Number.isNaN(eventDate.getTime())) return;
+      const key = `${eventDate.getFullYear()}-${String(eventDate.getMonth() + 1).padStart(2, '0')}`;
+      if (key in totals) {
+        const amount = Number(order.paymentAmount || 0) > 0 ? Number(order.paymentAmount || 0) : Number(order.total || 0) * 1.1;
+        totals[key] += amount;
+      }
     });
     res.json({
       labels: months.map((m) => m.label),

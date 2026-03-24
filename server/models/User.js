@@ -15,6 +15,26 @@ const UserSchema = new mongoose.Schema(
     birthDate: { type: String, default: '' },
     avatarUrl: { type: String, default: '' },
     companyLogoUrl: { type: String, default: '' },
+    wishlist: {
+      type: [
+        {
+          product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', required: true },
+          savedPrice: { type: Number, default: 0 },
+          savedInStock: { type: Boolean, default: true },
+          addedAt: { type: Date, default: Date.now },
+        },
+      ],
+      default: [],
+    },
+    recentlyViewed: {
+      type: [
+        {
+          product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', required: true },
+          viewedAt: { type: Date, default: Date.now },
+        },
+      ],
+      default: [],
+    },
   },
   { timestamps: true }
 );

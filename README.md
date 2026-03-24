@@ -30,4 +30,27 @@ Full-stack ecommerce project with separate user and admin clients and a Node/Exp
 
 ## Environment
 Create a `.env` file in the project root for server configuration.
+
+### Stripe (Online Card Payments)
+Add these variables to enable Stripe Checkout:
+
+```env
+STRIPE_SECRET_KEY=sk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+STORE_FRONTEND_URL=http://localhost:5173
+```
+
+If these are missing, the site still works and automatically falls back to non-card methods (Bank Transfer/COD).
+
+Webhook endpoint:
+
+```text
+POST /api/store/stripe/webhook
+```
+
+For local testing with Stripe CLI:
+
+```bash
+stripe listen --forward-to localhost:4000/api/store/stripe/webhook
+```
 # It-s-Too-Easy-Workwear

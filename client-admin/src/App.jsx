@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { io } from "socket.io-client";
 import "./App.css";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:4000";
@@ -38,10 +39,28 @@ const extractState = (address) => {
 };
 const getGstAmount = (total) => Number(total || 0) * 0.1;
 const getTotalWithGst = (total) => Number(total || 0) * 1.1;
+const isRevenueOrder = (order) =>
+  Boolean(order?.paymentCapturedAt) || String(order?.paymentStatus || "") === "Paid";
+const getRevenueAmount = (order) => {
+  const captured = Number(order?.paymentAmount || 0);
+  if (Number.isFinite(captured) && captured > 0) return captured;
+  if (isRevenueOrder(order)) return getTotalWithGst(order?.total || 0);
+  return 0;
+};
 const getCountryFromLocale = (locale) => {
   if (!locale) return "";
   const parts = locale.split("-");
   return parts[1] || "";
+};
+const formatDate = (value) => {
+  const date = value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+};
+const formatTime = (value) => {
+  const date = value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 };
 
 const getMonthBuckets = () => {
@@ -57,13 +76,14 @@ const getMonthBuckets = () => {
 
 const buildSalesFromOrders = (orders) => {
   const months = getMonthBuckets();
-    const totals = months.reduce((acc, month) => ({ ...acc, [month.key]: 0 }), {});
-    orders.forEach((order) => {
-      if (order.paymentStatus !== "Paid" || !order.createdAt) return;
-      const created = new Date(order.createdAt);
-      const key = `${created.getFullYear()}-${String(created.getMonth() + 1).padStart(2, "0")}`;
-      if (key in totals) totals[key] += Number(order.total || 0);
-    });
+  const totals = months.reduce((acc, month) => ({ ...acc, [month.key]: 0 }), {});
+  orders.forEach((order) => {
+    if (!isRevenueOrder(order)) return;
+    const eventDate = new Date(order?.paymentCapturedAt || order?.createdAt);
+    if (Number.isNaN(eventDate.getTime())) return;
+    const key = `${eventDate.getFullYear()}-${String(eventDate.getMonth() + 1).padStart(2, "0")}`;
+    if (key in totals) totals[key] += getRevenueAmount(order);
+  });
   return {
     labels: months.map((month) => month.label),
     values: months.map((month) => Number(totals[month.key].toFixed(2))),
@@ -76,6 +96,8 @@ const NAV_ITEMS = [
   { id: "orders", label: "Transaction", icon: "receipt", countKey: "orders" },
   { id: "customers", label: "Customers", icon: "users", countKey: "customers" },
   { id: "sales", label: "Sales Report", icon: "chart" },
+  { id: "messages", label: "Chat messages", icon: "chat", countKey: "messages" },
+  { id: "reviews", label: "Reviews and Ratings", icon: "review", countKey: "reviews" },
 ];
 
 const TOOL_ITEMS = [
@@ -116,6 +138,16 @@ const ICONS = {
       <path d="M6 17V9" />
       <path d="M12 17V5" />
       <path d="M18 17v-6" />
+    </svg>
+  ),
+  chat: (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.6">
+      <path d="M21 14a4 4 0 0 1-4 4H8l-5 3V6a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
+    </svg>
+  ),
+  review: (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3 6.4 20.2l1.1-6.2L3 9.6l6.2-.9z" />
     </svg>
   ),
   settings: (
@@ -178,6 +210,17 @@ const ICONS = {
   plus: (
     <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
       <path d="M12 5v14M5 12h14" />
+    </svg>
+  ),
+  send: (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M22 2 11 13" />
+      <path d="M22 2 15 22l-4-9-9-4 20-7z" />
+    </svg>
+  ),
+  star: (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="currentColor">
+      <path d="m12 2.7 2.7 5.5 6.1.9-4.4 4.3 1 6.1L12 16.9l-5.4 2.8 1-6.1L3.2 9.1l6.1-.9L12 2.7z" />
     </svg>
   ),
   chevron: (
@@ -366,7 +409,7 @@ function App() {
     itemQty: "1",
     itemImageUrl: "",
     total: "",
-    paymentStatus: "Paid",
+    paymentStatus: "Unpaid",
     status: "Shipping",
     trackingId: "",
     origin: "",
@@ -394,9 +437,32 @@ function App() {
   const [productPage, setProductPage] = useState(1);
   const [customerPage, setCustomerPage] = useState(1);
   const [orderPage, setOrderPage] = useState(1);
+  const [reviews, setReviews] = useState([]);
+  const [reviewTotal, setReviewTotal] = useState(0);
+  const [reviewPage, setReviewPage] = useState(1);
+  const [reviewSortBy, setReviewSortBy] = useState("mostRecent");
+  const [reviewSearch, setReviewSearch] = useState("");
+  const [reviewStatus, setReviewStatus] = useState("all");
+  const [reviewActionId, setReviewActionId] = useState("");
+  const [conversations, setConversations] = useState([]);
+  const [conversationSearch, setConversationSearch] = useState("");
+  const [selectedConversationId, setSelectedConversationId] = useState("");
+  const [conversationMessages, setConversationMessages] = useState([]);
+  const [messagesLoading, setMessagesLoading] = useState(false);
+  const [sendingMessage, setSendingMessage] = useState(false);
+  const [requestActionKey, setRequestActionKey] = useState("");
+  const [outgoingMessage, setOutgoingMessage] = useState("");
+  const [newMessageOpen, setNewMessageOpen] = useState(false);
+  const [newMessageForm, setNewMessageForm] = useState({
+    customerId: "",
+    customerName: "",
+    initialMessage: "",
+  });
+  const socketRef = useRef(null);
   const productPageSize = 8;
   const customerPageSize = 8;
   const orderPageSize = 8;
+  const reviewPageSize = 8;
 
   const authHeader = auth?.token ? { Authorization: `Bearer ${auth.token}` } : {};
   const adminAvatar = profileForm.avatarUrl || FALLBACK_ADMIN_AVATAR;
@@ -492,6 +558,77 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (!auth?.token) {
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+        socketRef.current = null;
+      }
+      return;
+    }
+
+    const socket = io(API_BASE, {
+      transports: ["websocket", "polling"],
+    });
+    socketRef.current = socket;
+
+    return () => {
+      socket.disconnect();
+      if (socketRef.current === socket) socketRef.current = null;
+    };
+  }, [auth?.token]);
+
+  useEffect(() => {
+    const socket = socketRef.current;
+    if (!socket || activePage !== "messages" || !selectedConversationId) return undefined;
+    const conversationId = String(selectedConversationId);
+
+    const onConversationMessage = (payload = {}) => {
+      if (String(payload.conversationId || "") !== conversationId) return;
+      const incoming = payload.message;
+      const preview = payload.preview;
+      if (!incoming) return;
+
+      setConversationMessages((prev) =>
+        prev.some((item) => String(item?._id || "") === String(incoming?._id || ""))
+          ? prev
+          : [...prev, incoming]
+      );
+
+      setConversations((prev) => {
+        const hasMatch = prev.some((conversation) => conversation._id === conversationId);
+        const nextConversation = preview
+          ? {
+              ...preview,
+              _id: preview._id || conversationId,
+            }
+          : {
+              _id: conversationId,
+              customerName: "Customer",
+              customerEmail: "",
+              unreadForAdmin: 0,
+              lastMessageText: incoming.text || "",
+              lastMessageAt: incoming.sentAt || new Date().toISOString(),
+            };
+
+        if (!hasMatch) return [nextConversation, ...prev];
+        return prev.map((conversation) =>
+          conversation._id === conversationId
+            ? { ...conversation, ...nextConversation }
+            : conversation
+        );
+      });
+    };
+
+    socket.emit("conversation:join", { conversationId });
+    socket.on("conversation:message", onConversationMessage);
+
+    return () => {
+      socket.emit("conversation:leave", { conversationId });
+      socket.off("conversation:message", onConversationMessage);
+    };
+  }, [activePage, selectedConversationId]);
+
+  useEffect(() => {
     const loadSummary = async () => {
       if (!auth?.token) return;
       try {
@@ -555,6 +692,107 @@ function App() {
     loadErrorLogs();
   }, [activePage, auth?.token, errorPage]);
 
+  useEffect(() => {
+    const loadReviews = async () => {
+      if (activePage !== "reviews" || !auth?.token) return;
+      try {
+        const params = new URLSearchParams({
+          page: String(reviewPage),
+          limit: String(reviewPageSize),
+          sortBy: reviewSortBy,
+          status: reviewStatus,
+        });
+        if (reviewSearch.trim()) params.set("search", reviewSearch.trim());
+        let res = await apiFetch(`${API_BASE}/api/reviews?${params.toString()}`, { headers: authHeader });
+        let data = await res.json();
+        if (!Array.isArray(data.data) || data.data.length === 0) {
+          await apiFetch(`${API_BASE}/api/reviews/seed`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...authHeader },
+            body: JSON.stringify({ count: 10 }),
+          });
+          res = await apiFetch(`${API_BASE}/api/reviews?${params.toString()}`, { headers: authHeader });
+          data = await res.json();
+        }
+        setReviews(Array.isArray(data.data) ? data.data : []);
+        setReviewTotal(Number(data.total) || 0);
+      } catch (err) {
+        console.error("Failed to load reviews", err);
+      }
+    };
+    loadReviews();
+  }, [activePage, auth?.token, reviewPage, reviewSortBy, reviewStatus, reviewSearch]);
+
+  useEffect(() => {
+    const loadConversations = async () => {
+      if (!auth?.token) return;
+      if (activePage !== "messages" && conversations.length > 0) return;
+      try {
+        const params = new URLSearchParams();
+        const searchTerm = activePage === "messages" ? conversationSearch.trim() : "";
+        if (searchTerm) params.set("search", searchTerm);
+        let res = await apiFetch(`${API_BASE}/api/messages/conversations?${params.toString()}`, {
+          headers: authHeader,
+        });
+        let data = await res.json();
+        if (!Array.isArray(data) || data.length === 0) {
+          await apiFetch(`${API_BASE}/api/messages/seed`, { method: "POST", headers: authHeader });
+          res = await apiFetch(`${API_BASE}/api/messages/conversations?${params.toString()}`, {
+            headers: authHeader,
+          });
+          data = await res.json();
+        }
+        setConversations(Array.isArray(data) ? data : []);
+      } catch (err) {
+        console.error("Failed to load conversations", err);
+      }
+    };
+    loadConversations();
+  }, [activePage, auth?.token, conversationSearch, conversations.length]);
+
+  useEffect(() => {
+    if (activePage !== "messages") return;
+    if (!conversations.length) {
+      setSelectedConversationId("");
+      return;
+    }
+    const exists = conversations.some((conversation) => conversation._id === selectedConversationId);
+    if (!selectedConversationId || !exists) {
+      setSelectedConversationId(conversations[0]._id);
+    }
+  }, [activePage, conversations, selectedConversationId]);
+
+  useEffect(() => {
+    const loadConversationMessages = async () => {
+      if (activePage !== "messages" || !auth?.token || !selectedConversationId) return;
+      setMessagesLoading(true);
+      try {
+        const res = await apiFetch(
+          `${API_BASE}/api/messages/conversations/${selectedConversationId}/messages`,
+          { headers: authHeader }
+        );
+        const data = await res.json();
+        setConversationMessages(Array.isArray(data.messages) ? data.messages : []);
+        await apiFetch(`${API_BASE}/api/messages/conversations/${selectedConversationId}/read`, {
+          method: "PUT",
+          headers: authHeader,
+        });
+        setConversations((prev) =>
+          prev.map((conversation) =>
+            conversation._id === selectedConversationId
+              ? { ...conversation, unreadForAdmin: 0 }
+              : conversation
+          )
+        );
+      } catch (err) {
+        console.error("Failed to load conversation messages", err);
+      } finally {
+        setMessagesLoading(false);
+      }
+    };
+    loadConversationMessages();
+  }, [activePage, auth?.token, selectedConversationId]);
+
   const productCategories = useMemo(() => {
     const categories = new Set(products.map((p) => p.category).filter(Boolean));
     return ["All", ...Array.from(categories)];
@@ -581,9 +819,9 @@ function App() {
   }, [customers]);
 
   const localSummary = useMemo(() => {
-      const totalRevenue = orders
-      .filter((order) => order.paymentStatus === "Paid")
-      .reduce((sum, order) => sum + getTotalWithGst(order.total || 0), 0);
+    const totalRevenue = orders
+      .filter((order) => isRevenueOrder(order))
+      .reduce((sum, order) => sum + getRevenueAmount(order), 0);
     return {
       totalRevenue,
       totalCustomers: customers.length,
@@ -593,17 +831,31 @@ function App() {
   }, [orders, customers, products]);
 
   const localSales = useMemo(() => {
-    const adjustedOrders = orders.map((order) => ({
-      ...order,
-      total: getTotalWithGst(order.total || 0),
-    }));
-    return buildSalesFromOrders(adjustedOrders);
+    return buildSalesFromOrders(orders);
   }, [orders]);
 
   const displaySummary = localSummary;
   const displaySales = localSales;
-  const messageCount = Math.min(customers.length, 9);
+  const selectedConversation = useMemo(
+    () => conversations.find((conversation) => conversation._id === selectedConversationId) || null,
+    [conversations, selectedConversationId]
+  );
+  const unreadMessageCount = conversations.reduce(
+    (sum, conversation) => sum + (Number(conversation.unreadForAdmin) || 0),
+    0
+  );
+  const messageCount = Math.min(unreadMessageCount, 9);
   const notificationCount = Math.min(orders.length, 9);
+  const navCountMap = useMemo(
+    () => ({
+      products: products.length,
+      orders: orders.length,
+      customers: customers.length,
+      messages: conversations.length,
+      reviews: reviewTotal || reviews.length,
+    }),
+    [products.length, orders.length, customers.length, conversations.length, reviewTotal, reviews.length]
+  );
   const salesMonths = useMemo(() => getMonthBuckets(), []);
   const ordersByMonth = useMemo(() => {
     const buckets = salesMonths.map((month) => ({ ...month, orders: [] }));
@@ -648,6 +900,10 @@ function App() {
   useEffect(() => {
     setOrderPage(1);
   }, [orderFilter, paymentFilter, searchQuery]);
+
+  useEffect(() => {
+    setReviewPage(1);
+  }, [reviewSearch, reviewSortBy, reviewStatus]);
 
   const filteredProducts = useMemo(() => {
     return products.filter((product) => {
@@ -845,6 +1101,148 @@ function App() {
       if (type === "orders") setOrders((prev) => prev.filter((item) => item._id !== id));
     } catch (err) {
       console.error("Delete failed", err);
+    }
+  };
+
+  const handleReviewStatusChange = async (reviewId, status) => {
+    if (!auth?.token) {
+      setAuthModalOpen(true);
+      return;
+    }
+    setReviewActionId(reviewId);
+    try {
+      const res = await apiFetch(`${API_BASE}/api/reviews/${reviewId}/status`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...authHeader },
+        body: JSON.stringify({ status }),
+      });
+      const updated = await res.json();
+      setReviews((prev) => prev.map((review) => (review._id === updated._id ? updated : review)));
+    } catch (err) {
+      console.error("Review update failed", err);
+    } finally {
+      setReviewActionId("");
+    }
+  };
+
+  const handleServiceRequestDecision = async ({ orderId, decision, conversationId }) => {
+    if (!auth?.token) {
+      setAuthModalOpen(true);
+      return;
+    }
+    if (!orderId || !["approve", "reject"].includes(decision)) return;
+
+    const actionKey = `${orderId}:${decision}`;
+    setRequestActionKey(actionKey);
+    try {
+      const res = await apiFetch(`${API_BASE}/api/orders/${orderId}/request`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...authHeader },
+        body: JSON.stringify({ decision, conversationId }),
+      });
+      const data = await res.json();
+
+      if (data?.order?._id) {
+        setOrders((prev) => prev.map((order) => (order._id === data.order._id ? data.order : order)));
+      }
+
+      const targetConversationId = data?.conversationId || conversationId || selectedConversationId;
+      if (targetConversationId) {
+        const msgRes = await apiFetch(`${API_BASE}/api/messages/conversations/${targetConversationId}/messages`, {
+          headers: authHeader,
+        });
+        const msgData = await msgRes.json();
+        if (selectedConversationId === targetConversationId) {
+          setConversationMessages(Array.isArray(msgData.messages) ? msgData.messages : []);
+        }
+
+        setConversations((prev) =>
+          prev.map((conversation) =>
+            conversation._id === targetConversationId
+              ? {
+                  ...conversation,
+                  lastMessageText: msgData?.conversation?.lastMessageText || conversation.lastMessageText,
+                  lastMessageAt: msgData?.conversation?.lastMessageAt || conversation.lastMessageAt,
+                }
+              : conversation
+          )
+        );
+      }
+    } catch (err) {
+      console.error("Failed to resolve service request", err);
+    } finally {
+      setRequestActionKey("");
+    }
+  };
+
+  const handleSendMessage = async (e) => {
+    e.preventDefault();
+    if (!auth?.token) {
+      setAuthModalOpen(true);
+      return;
+    }
+    if (!selectedConversationId || !outgoingMessage.trim() || sendingMessage) return;
+    setSendingMessage(true);
+    try {
+      const res = await apiFetch(
+        `${API_BASE}/api/messages/conversations/${selectedConversationId}/messages`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...authHeader },
+          body: JSON.stringify({ sender: "admin", text: outgoingMessage.trim() }),
+        }
+      );
+      const data = await res.json();
+      const newMsg = data.message;
+      if (newMsg) {
+        setConversationMessages((prev) => [...prev, newMsg]);
+        setConversations((prev) =>
+          prev.map((conversation) =>
+            conversation._id === selectedConversationId
+              ? {
+                  ...conversation,
+                  lastMessageText: newMsg.text,
+                  lastMessageAt: newMsg.sentAt,
+                }
+              : conversation
+          )
+        );
+      }
+      setOutgoingMessage("");
+    } catch (err) {
+      console.error("Send message failed", err);
+    } finally {
+      setSendingMessage(false);
+    }
+  };
+
+  const handleCreateConversation = async (e) => {
+    e.preventDefault();
+    if (!auth?.token) {
+      setAuthModalOpen(true);
+      return;
+    }
+    const payload = {
+      customerId: newMessageForm.customerId || undefined,
+      customerName: newMessageForm.customerName || undefined,
+      initialMessage: newMessageForm.initialMessage || "Hello, thanks for reaching out.",
+    };
+    try {
+      const res = await apiFetch(`${API_BASE}/api/messages/conversations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeader },
+        body: JSON.stringify(payload),
+      });
+      const conversation = await res.json();
+      setNewMessageOpen(false);
+      setNewMessageForm({ customerId: "", customerName: "", initialMessage: "" });
+      setActivePage("messages");
+      setSelectedConversationId(conversation._id);
+      const listRes = await apiFetch(`${API_BASE}/api/messages/conversations`, { headers: authHeader });
+      const list = await listRes.json();
+      setConversations(Array.isArray(list) ? list : []);
+    } catch (err) {
+      console.error("Create conversation failed", err);
     }
   };
 
@@ -1951,7 +2349,7 @@ function App() {
                   itemQty: "1",
                   itemImageUrl: "",
                   total: "",
-                  paymentStatus: "Paid",
+                  paymentStatus: "Unpaid",
                   status: "Shipping",
                   trackingId: "",
                   origin: "",
@@ -2066,6 +2464,7 @@ function App() {
                 <option value="Shipping">Shipping</option>
                 <option value="Completed">Completed</option>
                 <option value="Cancelled">Cancelled</option>
+                <option value="Returned">Returned</option>
               </select>
             </label>
             <label className="text-xs font-semibold text-gray-600">
@@ -2152,7 +2551,7 @@ function App() {
       )}
       <div className="mt-4 rounded-xl border border-gray-100 bg-gray-50 p-3">
         <div className="flex flex-wrap gap-2">
-          {["All", "Shipping", "Completed", "Cancelled"].map((label) => (
+          {["All", "Shipping", "Completed", "Cancelled", "Returned"].map((label) => (
             <button
               key={label}
               onClick={() => setOrderFilter(label)}
@@ -2181,61 +2580,120 @@ function App() {
             </tr>
           </thead>
           <tbody>
-            {pagedOrders.map((order) => (
-              <tr
-                key={order._id}
-                className="border-t border-gray-100 cursor-pointer hover:bg-gray-50"
-                onClick={() => setDetailView({ type: "order", data: order })}
-              >
-                <td className="px-4 py-3">
-                  <input type="checkbox" />
-                </td>
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-3">
-                    <div className="h-9 w-9 overflow-hidden rounded-lg bg-gray-100">
-                      <img
-                        src={buildImage(order.items?.[0]?.imageUrl || FALLBACK_PRODUCT_IMAGE)}
-                        alt={order.items?.[0]?.title || "Product"}
-                        className="h-full w-full object-cover"
-                      />
+            {pagedOrders.map((order) => {
+              const requestPending = String(order?.serviceRequest?.status || "").toLowerCase() === "pending";
+              const requestType = String(order?.serviceRequest?.type || "").toLowerCase();
+              const matchingConversation = conversations.find(
+                (conversation) =>
+                  String(conversation.customerEmail || "").toLowerCase() ===
+                  String(order.customerEmail || "").toLowerCase()
+              );
+              const approveKey = `${order._id}:approve`;
+              const rejectKey = `${order._id}:reject`;
+
+              return (
+                <tr
+                  key={order._id}
+                  className="border-t border-gray-100 cursor-pointer hover:bg-gray-50"
+                  onClick={() => setDetailView({ type: "order", data: order })}
+                >
+                  <td className="px-4 py-3">
+                    <input type="checkbox" />
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <div className="h-9 w-9 overflow-hidden rounded-lg bg-gray-100">
+                        <img
+                          src={buildImage(order.items?.[0]?.imageUrl || FALLBACK_PRODUCT_IMAGE)}
+                          alt={order.items?.[0]?.title || "Product"}
+                          className="h-full w-full object-cover"
+                        />
+                      </div>
+                      <div>
+                        <p className="font-semibold text-gray-800">{order.orderNumber}</p>
+                        <p className="text-[11px] text-gray-500">{order.items?.[0]?.title || "Product"}</p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="font-semibold text-gray-800">{order.orderNumber}</p>
-                      <p className="text-[11px] text-gray-500">{order.items?.[0]?.title || "Product"}</p>
-                    </div>
-                  </div>
-                </td>
-                <td className="px-4 py-3 text-gray-700">{order.customerName}</td>
-                <td className="px-4 py-3 text-gray-700">
-                  <div className="font-semibold">{formatPrice(getTotalWithGst(order.total))}</div>
-                  <div className="text-[10px] text-gray-400">Subtotal {formatPrice(order.total)}</div>
-                  <div className="text-[10px] text-gray-400">GST 10% {formatPrice(getGstAmount(order.total))}</div>
-                </td>
-                <td className="px-4 py-3 text-gray-500">
-                  {order.createdAt ? new Date(order.createdAt).toLocaleDateString() : "-"}
-                </td>
-                <td className="px-4 py-3">
-                  <StatusPill label={order.paymentStatus} tone={order.paymentStatus === "Paid" ? "success" : "warning"} />
-                </td>
-                <td className="px-4 py-3">
-                  <StatusPill
-                    label={order.status}
-                    tone={order.status === "Cancelled" ? "danger" : order.status === "Completed" ? "success" : "info"}
-                  />
-                </td>
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-2">
-                    <ActionButton
-                      icon={ICONS.eye}
-                      title="View"
-                      onClick={() => setDetailView({ type: "order", data: order })}
+                  </td>
+                  <td className="px-4 py-3 text-gray-700">{order.customerName}</td>
+                  <td className="px-4 py-3 text-gray-700">
+                    <div className="font-semibold">{formatPrice(getTotalWithGst(order.total))}</div>
+                    <div className="text-[10px] text-gray-400">Subtotal {formatPrice(order.total)}</div>
+                    <div className="text-[10px] text-gray-400">GST 10% {formatPrice(getGstAmount(order.total))}</div>
+                  </td>
+                  <td className="px-4 py-3 text-gray-500">
+                    {order.createdAt ? new Date(order.createdAt).toLocaleDateString() : "-"}
+                  </td>
+                  <td className="px-4 py-3">
+                    <StatusPill label={order.paymentStatus} tone={order.paymentStatus === "Paid" ? "success" : "warning"} />
+                  </td>
+                  <td className="px-4 py-3">
+                    <StatusPill
+                      label={order.status}
+                      tone={
+                        order.status === "Cancelled"
+                          ? "danger"
+                          : order.status === "Completed"
+                            ? "success"
+                            : order.status === "Returned"
+                              ? "warning"
+                              : "info"
+                      }
                     />
-                    <ActionButton icon={ICONS.edit} title="Edit" />
-                    <ActionButton icon={ICONS.trash} title="Delete" onClick={() => handleDelete("orders", order._id)} />
-                  </div>
-                </td>
-              </tr>
-            ))}
+                    {requestPending && (
+                      <p className="mt-1 text-[10px] font-semibold text-amber-700">
+                        Pending {requestType === "cancel" ? "cancellation" : "return"} request
+                      </p>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <ActionButton
+                        icon={ICONS.eye}
+                        title="View"
+                        onClick={() => setDetailView({ type: "order", data: order })}
+                      />
+                      <ActionButton icon={ICONS.edit} title="Edit" />
+                      <ActionButton icon={ICONS.trash} title="Delete" onClick={() => handleDelete("orders", order._id)} />
+                    </div>
+                    {requestPending && (
+                      <div className="mt-2 flex gap-1.5">
+                        <button
+                          type="button"
+                          disabled={requestActionKey === approveKey || requestActionKey === rejectKey}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleServiceRequestDecision({
+                              orderId: order._id,
+                              decision: "approve",
+                              conversationId: matchingConversation?._id,
+                            });
+                          }}
+                          className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold text-emerald-700 disabled:opacity-60"
+                        >
+                          Approve
+                        </button>
+                        <button
+                          type="button"
+                          disabled={requestActionKey === approveKey || requestActionKey === rejectKey}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleServiceRequestDecision({
+                              orderId: order._id,
+                              decision: "reject",
+                              conversationId: matchingConversation?._id,
+                            });
+                          }}
+                          className="rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-[10px] font-semibold text-rose-700 disabled:opacity-60"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
             {!filteredOrders.length && (
               <tr>
                 <td className="px-4 py-6 text-center text-gray-400" colSpan="8">
@@ -2551,12 +3009,12 @@ function App() {
               </span>
             </div>
             <div className="flex items-center justify-between">
-              <span>Paid Revenue (incl GST)</span>
+              <span>Paid Revenue</span>
               <span className="font-semibold">
                 {formatPrice(
                   (ordersByMonth[salesMonthIndex]?.orders || [])
-                    .filter((order) => order.paymentStatus === "Paid")
-                    .reduce((sum, order) => sum + getTotalWithGst(order.total || 0), 0)
+                    .filter((order) => isRevenueOrder(order))
+                    .reduce((sum, order) => sum + getRevenueAmount(order), 0)
                 )}
               </span>
             </div>
@@ -2587,6 +3045,372 @@ function App() {
             </div>
           </div>
         </div>
+      </div>
+    </div>
+  );
+
+  const renderReviews = () => (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="relative">
+            <input
+              value={reviewSearch}
+              onChange={(e) => setReviewSearch(e.target.value)}
+              placeholder="Search by product or customer"
+              className="w-72 rounded-xl border border-gray-200 bg-white px-4 py-2 pl-10 text-sm"
+            />
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">{ICONS.search}</span>
+          </div>
+          <select
+            value={reviewStatus}
+            onChange={(e) => setReviewStatus(e.target.value)}
+            className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600"
+          >
+            <option value="all">All status</option>
+            <option value="pending">Pending</option>
+            <option value="approved">Approved</option>
+            <option value="cancelled">Cancelled</option>
+          </select>
+        </div>
+        <select
+          value={reviewSortBy}
+          onChange={(e) => setReviewSortBy(e.target.value)}
+          className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600"
+        >
+          <option value="mostRecent">Sort By: Most Recent</option>
+          <option value="highestRating">Sort By: Highest Rating</option>
+          <option value="lowestRating">Sort By: Lowest Rating</option>
+        </select>
+      </div>
+
+      <div className="overflow-x-auto rounded-2xl border border-gray-200 bg-white">
+        <table className="min-w-full text-sm">
+          <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
+            <tr>
+              <th className="px-5 py-3">Product Name</th>
+              <th className="px-5 py-3">Date</th>
+              <th className="px-5 py-3">Customer</th>
+              <th className="px-5 py-3">Rating</th>
+              <th className="px-5 py-3">Review</th>
+              <th className="px-5 py-3">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {reviews.map((review) => (
+              <tr key={review._id} className="border-t border-gray-100 align-top">
+                <td className="px-5 py-4">
+                  <div className="flex min-w-[240px] items-center gap-3">
+                    <div className="h-12 w-12 overflow-hidden rounded-lg bg-gray-100">
+                      <img
+                        src={buildImage(review.productImageUrl || FALLBACK_PRODUCT_IMAGE)}
+                        alt={review.productName}
+                        className="h-full w-full object-cover"
+                      />
+                    </div>
+                    <div className="font-semibold text-gray-800">{review.productName}</div>
+                  </div>
+                </td>
+                <td className="px-5 py-4 text-gray-500">
+                  <div>{formatDate(review.createdAt)}</div>
+                  <div className="text-xs">{formatTime(review.createdAt)}</div>
+                </td>
+                <td className="px-5 py-4 text-gray-700">
+                  <div>{review.customerName}</div>
+                  <div className="text-xs text-gray-400">{review.customerLocation || "Unknown"}</div>
+                </td>
+                <td className="px-5 py-4">
+                  <div className="inline-flex items-center gap-1 text-emerald-500">
+                    {ICONS.star}
+                    <span className="text-gray-700">{Number(review.rating || 0).toFixed(1)}</span>
+                  </div>
+                </td>
+                <td className="px-5 py-4 text-gray-600">
+                  <p className="max-w-md italic">{review.reviewText}</p>
+                  <div className="mt-2 text-xs">
+                    <StatusPill
+                      label={review.status || "pending"}
+                      tone={
+                        review.status === "approved"
+                          ? "success"
+                          : review.status === "cancelled"
+                          ? "danger"
+                          : "warning"
+                      }
+                    />
+                  </div>
+                </td>
+                <td className="px-5 py-4">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={reviewActionId === review._id || review.status === "approved"}
+                      onClick={() => handleReviewStatusChange(review._id, "approved")}
+                      className="rounded-lg border border-blue-500 px-3 py-1 text-xs font-semibold text-blue-600 disabled:opacity-50"
+                    >
+                      Approve
+                    </button>
+                    <button
+                      type="button"
+                      disabled={reviewActionId === review._id || review.status === "cancelled"}
+                      onClick={() => handleReviewStatusChange(review._id, "cancelled")}
+                      className="rounded-lg border border-rose-400 px-3 py-1 text-xs font-semibold text-rose-500 disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {!reviews.length && (
+              <tr>
+                <td colSpan={6} className="px-5 py-8 text-center text-sm text-gray-400">
+                  No reviews found.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="flex items-center justify-between text-sm text-gray-500">
+        <span>
+          Page {reviewPage} of {Math.max(1, Math.ceil(reviewTotal / reviewPageSize))}
+        </span>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setReviewPage((prev) => Math.max(prev - 1, 1))}
+            disabled={reviewPage === 1}
+            className="rounded-lg border border-gray-200 px-3 py-1 disabled:opacity-40"
+          >
+            Prev
+          </button>
+          <button
+            type="button"
+            onClick={() => setReviewPage((prev) => prev + 1)}
+            disabled={reviewPage * reviewPageSize >= reviewTotal}
+            className="rounded-lg border border-gray-200 px-3 py-1 disabled:opacity-40"
+          >
+            Next
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderMessages = () => (
+    <div className="grid min-h-[70vh] gap-4 rounded-2xl border border-gray-200 bg-white p-4 lg:grid-cols-[340px,1fr]">
+      <div className="border-r border-gray-100 pr-3">
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-lg font-semibold text-gray-800">Contacts</h3>
+          <span className="text-sm text-gray-400">{conversations.length}</span>
+        </div>
+        <div className="relative">
+          <input
+            value={conversationSearch}
+            onChange={(e) => setConversationSearch(e.target.value)}
+            placeholder="Search"
+            className="w-full rounded-xl border border-gray-200 px-4 py-2 pl-10 text-sm"
+          />
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">{ICONS.search}</span>
+        </div>
+        <div className="mt-3 max-h-[62vh] space-y-1 overflow-y-auto pr-1">
+          {conversations.map((conversation) => (
+            <button
+              type="button"
+              key={conversation._id}
+              onClick={() => setSelectedConversationId(conversation._id)}
+              className={classNames(
+                "w-full rounded-xl border px-3 py-2 text-left",
+                selectedConversationId === conversation._id
+                  ? "border-blue-200 bg-blue-50"
+                  : "border-transparent hover:bg-gray-50"
+              )}
+            >
+              <div className="flex items-center gap-3">
+                <div className="relative h-10 w-10 overflow-hidden rounded-lg bg-gray-200">
+                  <img
+                    src={buildImage(conversation.customerAvatarUrl || FALLBACK_ADMIN_AVATAR)}
+                    alt={conversation.customerName}
+                    className="h-full w-full object-cover"
+                  />
+                  <span
+                    className={classNames(
+                      "absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border border-white",
+                      conversation.customerStatus === "online" ? "bg-blue-500" : "bg-gray-300"
+                    )}
+                  />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="truncate text-sm font-semibold text-gray-800">{conversation.customerName}</p>
+                    {conversation.unreadForAdmin > 0 && (
+                      <span className="rounded-full bg-blue-600 px-2 py-0.5 text-[10px] font-semibold text-white">
+                        {conversation.unreadForAdmin}
+                      </span>
+                    )}
+                  </div>
+                  <p className="truncate text-xs text-gray-500">
+                    {conversation.lastMessageText || "No messages yet"}
+                  </p>
+                  <p className="text-[10px] text-gray-400">{formatTime(conversation.lastMessageAt)}</p>
+                </div>
+              </div>
+            </button>
+          ))}
+          {!conversations.length && (
+            <p className="rounded-xl border border-dashed border-gray-200 p-4 text-sm text-gray-400">
+              No conversations yet.
+            </p>
+          )}
+        </div>
+      </div>
+
+      <div className="flex min-h-[65vh] flex-col">
+        <div className="mb-3 flex items-center justify-between border-b border-gray-100 pb-3">
+          <div className="flex items-center gap-3">
+            {selectedConversation ? (
+              <>
+                <div className="h-12 w-12 overflow-hidden rounded-xl bg-gray-200">
+                  <img
+                    src={buildImage(selectedConversation.customerAvatarUrl || FALLBACK_ADMIN_AVATAR)}
+                    alt={selectedConversation.customerName}
+                    className="h-full w-full object-cover"
+                  />
+                </div>
+                <div>
+                  <p className="font-semibold text-gray-800">{selectedConversation.customerName}</p>
+                  <p className="text-xs text-gray-400">
+                    {selectedConversation.customerStatus === "online" ? "Online" : "Offline"} -{" "}
+                    {formatTime(selectedConversation.lastMessageAt)}
+                  </p>
+                </div>
+              </>
+            ) : (
+              <p className="text-sm text-gray-400">Select a contact to view messages.</p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => setNewMessageOpen(true)}
+            className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white"
+          >
+            New Message
+          </button>
+        </div>
+
+        <div className="flex-1 space-y-3 overflow-y-auto rounded-xl bg-gray-50 p-4">
+          {messagesLoading && <p className="text-sm text-gray-400">Loading messages...</p>}
+          {!messagesLoading && !selectedConversation && (
+            <div className="grid h-full place-items-center text-center text-gray-500">
+              <div>
+                <div className="mx-auto mb-3 grid h-16 w-16 place-items-center rounded-full border border-gray-200 bg-white">
+                  {ICONS.chat}
+                </div>
+                <p className="text-lg font-semibold text-gray-800">Messages</p>
+                <p className="text-sm text-gray-500">Click on a contact to view messages.</p>
+              </div>
+            </div>
+          )}
+          {!messagesLoading &&
+            selectedConversation &&
+            conversationMessages.map((message) => {
+              const requestStatus = String(message?.requestMeta?.status || "").toLowerCase();
+              const requestType = String(message?.requestMeta?.type || "").toLowerCase();
+              const requestOrderId = String(message?.requestMeta?.orderId || "");
+              const approveKey = `${requestOrderId}:approve`;
+              const rejectKey = `${requestOrderId}:reject`;
+              const canResolveRequest =
+                message.sender !== "admin" &&
+                requestStatus === "pending" &&
+                requestOrderId &&
+                ["cancel", "return"].includes(requestType);
+
+              return (
+                <div
+                  key={message._id}
+                  className={classNames(
+                    "max-w-[70%] rounded-2xl px-4 py-3 text-sm shadow-sm",
+                    message.sender === "admin"
+                      ? "ml-auto bg-white text-gray-800"
+                      : "bg-blue-100 text-gray-800"
+                  )}
+                >
+                  {message.productCard?.title && (
+                    <div className="mb-2 flex items-center gap-2 rounded-lg border border-white/80 bg-white/80 p-2 text-xs">
+                      <div className="h-10 w-10 overflow-hidden rounded bg-gray-100">
+                        <img
+                          src={buildImage(message.productCard.imageUrl || FALLBACK_PRODUCT_IMAGE)}
+                          alt={message.productCard.title}
+                          className="h-full w-full object-cover"
+                        />
+                      </div>
+                      <div>
+                        <p className="font-semibold text-gray-700">{message.productCard.title}</p>
+                        <p className="text-gray-500">{formatPrice(message.productCard.price || 0)}</p>
+                      </div>
+                    </div>
+                  )}
+                  <p>{message.text}</p>
+                  {canResolveRequest && (
+                    <div className="mt-2 flex gap-1.5">
+                      <button
+                        type="button"
+                        disabled={requestActionKey === approveKey || requestActionKey === rejectKey}
+                        onClick={() =>
+                          handleServiceRequestDecision({
+                            orderId: requestOrderId,
+                            decision: "approve",
+                            conversationId: selectedConversationId,
+                          })
+                        }
+                        className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold text-emerald-700 disabled:opacity-60"
+                      >
+                        Approve
+                      </button>
+                      <button
+                        type="button"
+                        disabled={requestActionKey === approveKey || requestActionKey === rejectKey}
+                        onClick={() =>
+                          handleServiceRequestDecision({
+                            orderId: requestOrderId,
+                            decision: "reject",
+                            conversationId: selectedConversationId,
+                          })
+                        }
+                        className="rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-[10px] font-semibold text-rose-700 disabled:opacity-60"
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  )}
+                  <p className="mt-2 text-[10px] text-gray-500">{formatTime(message.sentAt)}</p>
+                </div>
+              );
+            })}
+          {!messagesLoading && selectedConversation && conversationMessages.length === 0 && (
+            <p className="text-sm text-gray-400">No messages in this conversation yet.</p>
+          )}
+        </div>
+
+        <form onSubmit={handleSendMessage} className="mt-3 flex items-center gap-2 rounded-xl border border-gray-200 bg-white p-2">
+          <input
+            value={outgoingMessage}
+            onChange={(e) => setOutgoingMessage(e.target.value)}
+            disabled={!selectedConversation || sendingMessage}
+            placeholder="Your message"
+            className="flex-1 rounded-lg border border-transparent px-3 py-2 text-sm outline-none focus:border-blue-200"
+          />
+          <button
+            type="submit"
+            disabled={!selectedConversation || !outgoingMessage.trim() || sendingMessage}
+            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+          >
+            Send
+            {ICONS.send}
+          </button>
+        </form>
       </div>
     </div>
   );
@@ -2766,7 +3590,7 @@ function App() {
         )}
         <aside
           className={classNames(
-            "fixed left-0 top-0 z-50 flex h-full flex-col border-r border-gray-200 bg-white px-5 py-6 transition-transform lg:fixed lg:translate-x-0",
+            "fixed left-0 top-0 z-50 flex h-full flex-col overflow-y-auto no-scrollbar border-r border-gray-200 bg-white px-5 py-6 transition-transform lg:fixed lg:translate-x-0",
             sidebarOpen ? "translate-x-0" : "-translate-x-full",
             "w-64",
             "lg:flex"
@@ -2819,11 +3643,7 @@ function App() {
                   </span>
                   {item.countKey && (
                     <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] text-gray-500">
-                      {item.countKey === "products"
-                        ? products.length
-                        : item.countKey === "orders"
-                        ? orders.length
-                        : customers.length}
+                      {navCountMap[item.countKey] ?? 0}
                     </span>
                   )}
                 </button>
@@ -2910,13 +3730,24 @@ function App() {
                   {activeDropdown === "messages" && (
                     <div data-dropdown-menu className="absolute right-0 top-12 z-20 w-60 rounded-xl border border-gray-200 bg-white p-3 text-xs shadow-lg">
                       <p className="mb-2 font-semibold text-gray-700">New Messages</p>
-                      {customers.slice(0, 3).map((customer) => (
-                        <div key={customer._id} className="rounded-lg px-2 py-2 hover:bg-gray-50">
-                          <p className="font-semibold text-gray-700">{customer.name}</p>
-                          <p className="text-[10px] text-gray-400">New customer inquiry</p>
-                        </div>
+                      {conversations.slice(0, 3).map((conversation) => (
+                        <button
+                          type="button"
+                          key={conversation._id}
+                          onClick={() => {
+                            setActiveDropdown("");
+                            setActivePage("messages");
+                            setSelectedConversationId(conversation._id);
+                          }}
+                          className="w-full rounded-lg px-2 py-2 text-left hover:bg-gray-50"
+                        >
+                          <p className="font-semibold text-gray-700">{conversation.customerName}</p>
+                          <p className="truncate text-[10px] text-gray-400">
+                            {conversation.lastMessageText || "No messages yet"}
+                          </p>
+                        </button>
                       ))}
-                      {!customers.length && (
+                      {!conversations.length && (
                         <p className="text-[10px] text-gray-400">No messages yet.</p>
                       )}
                     </div>
@@ -2995,10 +3826,16 @@ function App() {
                   ? "Customer"
                   : activePage === "orders"
                   ? "Orders"
+                  : activePage === "messages"
+                  ? "Messages"
+                  : activePage === "reviews"
+                  ? "Reviews and Ratings"
                   : activePage === "account"
                   ? "Account & Settings"
                   : activePage === "error-log"
                   ? "Error Log"
+                  : activePage === "help"
+                  ? "Help"
                   : "Sales Report"}
               </h1>
               <p className="text-xs text-gray-400">Dashboard</p>
@@ -3013,6 +3850,8 @@ function App() {
                 {activePage === "customers" && renderCustomers()}
                 {activePage === "add-customer" && renderAddCustomer()}
                 {activePage === "orders" && renderOrders()}
+                {activePage === "messages" && renderMessages()}
+                {activePage === "reviews" && renderReviews()}
                 {activePage === "account" && renderAccount()}
                 {activePage === "sales" && renderSalesReport()}
                 {activePage === "error-log" && renderErrorLog()}
@@ -3023,6 +3862,73 @@ function App() {
       </div>
 
       {renderDetailModal()}
+
+      {newMessageOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-gray-900">New Message</h3>
+              <button type="button" onClick={() => setNewMessageOpen(false)} className="text-gray-400">
+                x
+              </button>
+            </div>
+            <form onSubmit={handleCreateConversation} className="mt-4 space-y-3">
+              <label className="text-xs font-semibold text-gray-600">
+                Existing customer
+                <select
+                  value={newMessageForm.customerId}
+                  onChange={(e) =>
+                    setNewMessageForm((prev) => ({
+                      ...prev,
+                      customerId: e.target.value,
+                    }))
+                  }
+                  className="mt-2 w-full rounded-xl border border-gray-200 px-4 py-3 text-sm"
+                >
+                  <option value="">Select customer</option>
+                  {customers.map((customer) => (
+                    <option key={customer._id} value={customer._id}>
+                      {customer.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-xs font-semibold text-gray-600">
+                Or new customer name
+                <input
+                  value={newMessageForm.customerName}
+                  onChange={(e) =>
+                    setNewMessageForm((prev) => ({ ...prev, customerName: e.target.value }))
+                  }
+                  className="mt-2 w-full rounded-xl border border-gray-200 px-4 py-3 text-sm"
+                  placeholder="Jane Doe"
+                />
+              </label>
+              <label className="text-xs font-semibold text-gray-600">
+                First message
+                <textarea
+                  rows={3}
+                  value={newMessageForm.initialMessage}
+                  onChange={(e) =>
+                    setNewMessageForm((prev) => ({
+                      ...prev,
+                      initialMessage: e.target.value,
+                    }))
+                  }
+                  className="mt-2 w-full rounded-xl border border-gray-200 px-4 py-3 text-sm"
+                  placeholder="Hello, thank you for contacting us."
+                />
+              </label>
+              <button
+                type="submit"
+                className="rounded-full bg-blue-600 px-5 py-2 text-xs font-semibold text-white"
+              >
+                Create Conversation
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
 
       {authModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">

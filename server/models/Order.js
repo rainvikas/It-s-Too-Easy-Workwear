@@ -16,8 +16,29 @@ const OrderSchema = new mongoose.Schema(
       },
     ],
     total: { type: Number, required: true, min: 0 },
-    paymentStatus: { type: String, enum: ['Paid', 'Unpaid'], default: 'Paid' },
-    status: { type: String, enum: ['Shipping', 'Completed', 'Cancelled'], default: 'Shipping' },
+    paymentStatus: { type: String, enum: ['Paid', 'Unpaid'], default: 'Unpaid' },
+    paymentMethod: { type: String, enum: ['card', 'bank', 'cash'], default: 'card' },
+    paymentProvider: { type: String, enum: ['none', 'manual', 'stripe'], default: 'none' },
+    stripeCheckoutSessionId: { type: String, default: null },
+    paymentTransactionId: { type: String, default: '' },
+    paymentCapturedAt: { type: Date, default: null },
+    paymentAmount: { type: Number, default: 0, min: 0 },
+    paymentCurrency: { type: String, default: 'AUD' },
+    paymentFailureReason: { type: String, default: '' },
+    status: {
+      type: String,
+      enum: ['Pending Payment', 'Shipping', 'Completed', 'Cancelled', 'Returned'],
+      default: 'Shipping',
+    },
+    serviceRequest: {
+      type: { type: String, enum: ['cancel', 'return', ''], default: '' },
+      reason: { type: String, default: '' },
+      status: { type: String, enum: ['none', 'pending', 'approved', 'rejected'], default: 'none' },
+      requestedAt: { type: Date, default: null },
+      resolvedAt: { type: Date, default: null },
+      resolution: { type: String, default: '' },
+      resolvedBy: { type: String, default: '' },
+    },
     trackingId: { type: String, default: '' },
     origin: { type: String, default: '' },
     destination: { type: String, default: '' },
@@ -33,5 +54,7 @@ const OrderSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+OrderSchema.index({ stripeCheckoutSessionId: 1 });
 
 module.exports = mongoose.model('Order', OrderSchema);
