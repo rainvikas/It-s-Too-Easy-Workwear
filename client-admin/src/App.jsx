@@ -228,6 +228,23 @@ const ICONS = {
       <path d="M6 9l6 6 6-6" />
     </svg>
   ),
+  menu: (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.9">
+      <path d="M4 7h16M4 12h16M4 17h16" />
+    </svg>
+  ),
+  close: (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="m6 6 12 12M18 6 6 18" />
+    </svg>
+  ),
+  logout: (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M10 17l-5-5 5-5" />
+      <path d="M5 12h10" />
+      <path d="M14 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4" />
+    </svg>
+  ),
 };
 
 function StatusPill({ label, tone }) {
@@ -285,6 +302,48 @@ function MetricCard({ title, value, change, tone }) {
   );
 }
 
+function InfoField({ label, value, className }) {
+  return (
+    <div className={classNames("space-y-1", className)}>
+      <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-gray-400">{label}</p>
+      <div className="break-words text-sm font-medium text-gray-700">{value}</div>
+    </div>
+  );
+}
+
+function MobileCard({ children, onClick, className }) {
+  return (
+    <article
+      onClick={onClick}
+      className={classNames(
+        "rounded-2xl border border-gray-200 bg-white p-4 shadow-sm",
+        onClick ? "cursor-pointer transition active:scale-[0.99]" : "",
+        className
+      )}
+    >
+      {children}
+    </article>
+  );
+}
+
+const getProductStatusMeta = (status) =>
+  status === "out-of-stock"
+    ? { label: "Out of Stock", tone: "warning" }
+    : { label: "Available", tone: "success" };
+
+const getOrderStatusTone = (status) => {
+  if (status === "Cancelled") return "danger";
+  if (status === "Completed") return "success";
+  if (status === "Returned") return "warning";
+  return "info";
+};
+
+const getReviewStatusTone = (status) => {
+  if (status === "approved") return "success";
+  if (status === "cancelled") return "danger";
+  return "warning";
+};
+
 function buildLinePath(values, width, height, padding) {
   if (!values.length) return "";
   const maxValue = Math.max(...values, 1);
@@ -314,7 +373,7 @@ const downloadCsv = (filename, rows) => {
         headers
           .map((key) => {
             const value = row[key] ?? "";
-            const escaped = String(value).replace(/\"/g, '""');
+            const escaped = String(value).replace(/"/g, '""');
             return `"${escaped}"`;
           })
           .join(",")
@@ -452,6 +511,7 @@ function App() {
   const [sendingMessage, setSendingMessage] = useState(false);
   const [requestActionKey, setRequestActionKey] = useState("");
   const [outgoingMessage, setOutgoingMessage] = useState("");
+  const [mobileMessageView, setMobileMessageView] = useState("list");
   const [newMessageOpen, setNewMessageOpen] = useState(false);
   const [newMessageForm, setNewMessageForm] = useState({
     customerId: "",
@@ -503,7 +563,7 @@ function App() {
       try {
         const data = await res.json();
         detail = data?.message ? ` ${data.message}` : "";
-      } catch (_) {
+      } catch {
         detail = "";
       }
       const message = `${res.status} ${res.statusText}.${detail}`;
@@ -555,6 +615,23 @@ function App() {
     };
 
     loadData();
+  }, []);
+
+  useEffect(() => {
+    if (!sidebarOpen) return undefined;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, [sidebarOpen]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth >= 1024) setSidebarOpen(false);
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
   }, []);
 
   useEffect(() => {
@@ -751,6 +828,14 @@ function App() {
   }, [activePage, auth?.token, conversationSearch, conversations.length]);
 
   useEffect(() => {
+    if (activePage !== "messages") {
+      setMobileMessageView("list");
+      return;
+    }
+    if (selectedConversationId) setMobileMessageView("chat");
+  }, [activePage, selectedConversationId]);
+
+  useEffect(() => {
     if (activePage !== "messages") return;
     if (!conversations.length) {
       setSelectedConversationId("");
@@ -834,8 +919,8 @@ function App() {
     return buildSalesFromOrders(orders);
   }, [orders]);
 
-  const displaySummary = localSummary;
-  const displaySales = localSales;
+  const displaySummary = summary || localSummary;
+  const displaySales = sales || localSales;
   const selectedConversation = useMemo(
     () => conversations.find((conversation) => conversation._id === selectedConversationId) || null,
     [conversations, selectedConversationId]
@@ -1272,7 +1357,7 @@ function App() {
     if (!auth?.token) return;
     setError("");
     try {
-      const res = await apiFetch(`${API_BASE}/api/admin/profile`, {
+      await apiFetch(`${API_BASE}/api/admin/profile`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", ...authHeader },
         body: JSON.stringify(nextProfile),
@@ -1298,7 +1383,7 @@ function App() {
       return;
     }
     try {
-      const res = await apiFetch(`${API_BASE}/api/admin/password`, {
+      await apiFetch(`${API_BASE}/api/admin/password`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", ...authHeader },
         body: JSON.stringify({
@@ -1325,14 +1410,14 @@ function App() {
   const salesProgress = Math.min(displaySummary.totalRevenue / salesTarget, 1);
 
   const renderDashboard = () => (
-    <div className="grid gap-6 lg:grid-cols-[1.3fr,1fr]">
+    <div className="grid gap-4 lg:gap-6 lg:grid-cols-[1.3fr,1fr]">
       <div className="space-y-6">
         <section className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-5">
-          <div className="flex items-center justify-between text-sm text-emerald-700">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-emerald-700">
             <span className="font-semibold">Sales Target</span>
             <span>In Progress</span>
           </div>
-          <div className="mt-4 flex items-end justify-between text-sm text-emerald-800">
+          <div className="mt-4 flex flex-wrap items-end justify-between gap-2 text-sm text-emerald-800">
             <span className="text-lg font-semibold">{formatPrice(displaySummary.totalRevenue)}</span>
             <span>Sales Target {formatPrice(salesTarget)}</span>
           </div>
@@ -1345,14 +1430,14 @@ function App() {
         </section>
 
         <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-          <div className="mb-4 flex items-center justify-between">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-sm font-semibold text-gray-700">Your Sales this year</p>
               <p className="text-xs text-gray-500">Average sale value and item per sale</p>
             </div>
             <button className="text-xs font-semibold text-blue-600">Show All</button>
           </div>
-          <div className="flex items-center gap-4 text-xs text-gray-500">
+          <div className="flex flex-wrap items-center gap-4 text-xs text-gray-500">
             <div className="flex items-center gap-2">
               <span className="h-2 w-2 rounded-full bg-amber-400" />
               <span>Average Sale Value</span>
@@ -1421,12 +1506,48 @@ function App() {
       </div>
 
       <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm lg:col-span-1">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <h4 className="text-sm font-semibold text-gray-700">Product Popular</h4>
           <button className="text-xs font-semibold text-blue-600">Show All</button>
         </div>
-        <div className="mt-4 overflow-hidden rounded-xl border border-gray-100">
-          <table className="w-full text-left text-xs">
+        <div className="mt-4 space-y-3 lg:hidden">
+          {products.slice(0, 4).map((product) => {
+            const statusMeta = getProductStatusMeta(product.status);
+            return (
+              <MobileCard key={product._id}>
+                <div className="flex items-start gap-3">
+                  <div className="h-12 w-12 overflow-hidden rounded-xl bg-gray-100">
+                    <img
+                      src={buildImage(product.imageUrl || FALLBACK_PRODUCT_IMAGE)}
+                      alt={product.title}
+                      className="h-full w-full object-cover"
+                    />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate font-semibold text-gray-800">{product.title}</p>
+                        <p className="text-[11px] text-gray-400">{product.sku || "SKU"}</p>
+                      </div>
+                      <StatusPill label={statusMeta.label} tone={statusMeta.tone} />
+                    </div>
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                      <InfoField label="Price" value={formatPrice(product.price)} />
+                      <InfoField label="Sales" value={formatCount(product.quantity || 0)} />
+                    </div>
+                  </div>
+                </div>
+              </MobileCard>
+            );
+          })}
+          {!products.length && (
+            <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-6 text-center text-xs text-gray-500">
+              Add products to populate the dashboard.
+            </div>
+          )}
+        </div>
+        <div className="admin-table-shell mt-4 hidden rounded-xl border border-gray-100 lg:block">
+          <table className="min-w-[680px] w-full text-left text-xs">
             <thead className="bg-gray-50 text-gray-500">
               <tr>
                 <th className="px-4 py-3 font-medium">Product</th>
@@ -1436,30 +1557,33 @@ function App() {
               </tr>
             </thead>
             <tbody>
-              {products.slice(0, 4).map((product) => (
-                <tr key={product._id} className="border-t border-gray-100">
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-3">
-                      <div className="h-9 w-9 overflow-hidden rounded-lg bg-gray-100">
-                        <img
-                          src={buildImage(product.imageUrl || FALLBACK_PRODUCT_IMAGE)}
-                          alt={product.title}
-                          className="h-full w-full object-cover"
-                        />
+              {products.slice(0, 4).map((product) => {
+                const statusMeta = getProductStatusMeta(product.status);
+                return (
+                  <tr key={product._id} className="border-t border-gray-100">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <div className="h-9 w-9 overflow-hidden rounded-lg bg-gray-100">
+                          <img
+                            src={buildImage(product.imageUrl || FALLBACK_PRODUCT_IMAGE)}
+                            alt={product.title}
+                            className="h-full w-full object-cover"
+                          />
+                        </div>
+                        <div>
+                          <p className="font-semibold text-gray-800">{product.title}</p>
+                          <p className="text-[10px] text-gray-400">{product.sku || "SKU"}</p>
+                        </div>
                       </div>
-                      <div>
-                        <p className="font-semibold text-gray-800">{product.title}</p>
-                        <p className="text-[10px] text-gray-400">{product.sku || "SKU"}</p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-gray-700">{formatPrice(product.price)}</td>
-                  <td className="px-4 py-3 text-gray-700">{formatCount(product.quantity || 0)}</td>
-                  <td className="px-4 py-3">
-                    <StatusPill label={product.status === "out-of-stock" ? "Out of Stock" : "Success"} tone={product.status === "out-of-stock" ? "warning" : "success"} />
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td className="px-4 py-3 text-gray-700">{formatPrice(product.price)}</td>
+                    <td className="px-4 py-3 text-gray-700">{formatCount(product.quantity || 0)}</td>
+                    <td className="px-4 py-3">
+                      <StatusPill label={statusMeta.label} tone={statusMeta.tone} />
+                    </td>
+                  </tr>
+                );
+              })}
               {!products.length && (
                 <tr>
                   <td className="px-4 py-6 text-center text-gray-400" colSpan="4">
@@ -1492,7 +1616,7 @@ function App() {
               <div className="mt-4 h-28 rounded-xl bg-gradient-to-br from-gray-100 to-gray-50">
                 <div className="h-full w-full rounded-xl border border-gray-200 bg-[radial-gradient(circle_at_20%_20%,rgba(59,130,246,0.2),transparent_60%),radial-gradient(circle_at_80%_80%,rgba(16,185,129,0.2),transparent_60%)]" />
               </div>
-              <div className="mt-4 grid grid-cols-2 gap-4 text-xs text-gray-500">
+              <div className="mt-4 grid gap-4 text-xs text-gray-500 sm:grid-cols-2">
                 <div>
                   <p className="text-[10px] uppercase">Departure</p>
                   <p className="text-sm font-semibold text-gray-700">
@@ -1508,8 +1632,8 @@ function App() {
                   <p>{latestOrder.eta || "ETA pending"}</p>
                 </div>
               </div>
-              <div className="mt-4 flex items-center justify-between rounded-full bg-blue-50 p-2">
-                <div className="flex items-center gap-3">
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-3xl bg-blue-50 p-3">
+                <div className="flex min-w-0 items-center gap-3">
                   <div className="h-10 w-10 rounded-full bg-white" />
                   <div>
                     <p className="text-xs text-gray-500">Courier</p>
@@ -1566,22 +1690,22 @@ function App() {
   );
 
   const renderProductList = () => (
-    <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+    <div className="admin-panel rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-semibold text-gray-900">Product</h2>
           <p className="text-xs text-gray-500">Dashboard / Product / Sneakers</p>
         </div>
-        <div className="relative flex items-center gap-2">
+        <div className="relative flex flex-wrap items-center gap-2">
           <button
             data-dropdown-trigger
             onClick={() => setActiveDropdown((prev) => (prev === "product-filter" ? "" : "product-filter"))}
-            className="rounded-full border border-gray-200 px-4 py-2 text-xs font-semibold text-gray-600"
+            className="w-full rounded-full border border-gray-200 px-4 py-2 text-xs font-semibold text-gray-600 sm:w-auto"
           >
             Filter
           </button>
           {activeDropdown === "product-filter" && (
-            <div data-dropdown-menu className="absolute right-0 top-12 z-10 w-44 rounded-xl border border-gray-200 bg-white p-2 text-xs shadow-lg">
+            <div data-dropdown-menu className="absolute right-0 top-12 z-10 w-44 max-w-[calc(100vw-1.5rem)] rounded-xl border border-gray-200 bg-white p-2 text-xs shadow-lg">
               {["All", "available", "out-of-stock"].map((status) => (
                 <button
                   key={status}
@@ -1613,12 +1737,12 @@ function App() {
                 }))
               )
             }
-            className="rounded-full border border-gray-200 px-4 py-2 text-xs font-semibold text-gray-600"
+            className="w-full rounded-full border border-gray-200 px-4 py-2 text-xs font-semibold text-gray-600 sm:w-auto"
           >
             Export
           </button>
           <button
-            className="flex items-center gap-2 rounded-full bg-blue-600 px-4 py-2 text-xs font-semibold text-white"
+            className="flex w-full items-center justify-center gap-2 rounded-full bg-blue-600 px-4 py-2 text-xs font-semibold text-white sm:w-auto"
             onClick={() => {
               resetProductForm();
               setActivePage("add-product");
@@ -1644,8 +1768,83 @@ function App() {
           ))}
         </div>
       </div>
-      <div className="mt-5 overflow-hidden rounded-xl border border-gray-100">
-        <table className="w-full text-left text-xs">
+      <div className="mt-5 space-y-3 lg:hidden">
+        {pagedProducts.map((product) => {
+          const statusMeta = getProductStatusMeta(product.status);
+          return (
+            <MobileCard
+              key={product._id}
+              onClick={() => setDetailView({ type: "product", data: product })}
+            >
+              <div className="flex items-start gap-3">
+                <div className="h-14 w-14 overflow-hidden rounded-xl bg-gray-100">
+                  <img
+                    src={buildImage(product.imageUrl || FALLBACK_PRODUCT_IMAGE)}
+                    alt={product.title}
+                    className="h-full w-full object-cover"
+                  />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-gray-800">{product.title}</p>
+                      <p className="text-[11px] text-gray-500">{product.sku || "SKU"}</p>
+                    </div>
+                    <StatusPill label={statusMeta.label} tone={statusMeta.tone} />
+                  </div>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <InfoField label="Total" value={formatPrice(product.price)} />
+                    <InfoField label="Size" value={product.sizes?.[0] || "-"} />
+                    <InfoField label="Quantity" value={product.quantity || 0} />
+                    <InfoField
+                      label="Date"
+                      value={product.createdAt ? new Date(product.createdAt).toLocaleDateString() : "-"}
+                    />
+                  </div>
+                  <div className="mt-4 flex flex-wrap items-center gap-2">
+                    <ActionButton
+                      icon={ICONS.eye}
+                      title="View"
+                      onClick={() => setDetailView({ type: "product", data: product })}
+                    />
+                    <ActionButton
+                      icon={ICONS.edit}
+                      title="Edit"
+                      onClick={() => {
+                        setEditingProduct(product);
+                        setProductForm({
+                          sku: product.sku || "",
+                          title: product.title || "",
+                          description: product.description || "",
+                          price: product.price || "",
+                          sizes: product.sizes?.join(",") || "",
+                          category: product.category || "",
+                          quantity: product.quantity || "",
+                          color: product.color || "",
+                          status: product.status || "available",
+                        });
+                        setActivePage("add-product");
+                      }}
+                    />
+                    <ActionButton
+                      icon={ICONS.trash}
+                      title="Delete"
+                      onClick={() => handleDelete("products", product._id)}
+                    />
+                  </div>
+                </div>
+              </div>
+            </MobileCard>
+          );
+        })}
+        {!filteredProducts.length && (
+          <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-6 text-center text-sm text-gray-400">
+            No products found.
+          </div>
+        )}
+      </div>
+      <div className="admin-table-shell mt-5 hidden rounded-xl border border-gray-100 lg:block">
+        <table className="min-w-[980px] w-full text-left text-xs">
           <thead className="bg-gray-50 text-gray-500">
             <tr>
               <th className="px-4 py-3"></th>
@@ -1740,7 +1939,7 @@ function App() {
           </tbody>
         </table>
       </div>
-      <div className="mt-4 flex items-center justify-between text-xs text-gray-500">
+      <div className="mt-4 flex flex-col gap-2 text-xs text-gray-500 sm:flex-row sm:items-center sm:justify-between">
         <span>
           Page {productPage} of {Math.max(1, Math.ceil(filteredProducts.length / productPageSize))}
         </span>
@@ -1773,9 +1972,9 @@ function App() {
       <form
         id="product-form"
         onSubmit={handleProductSubmit}
-        className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm"
+        className="admin-panel rounded-2xl border border-gray-200 bg-white p-6 shadow-sm"
       >
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-xl font-semibold text-gray-900">Product Information</h2>
             <p className="text-xs text-gray-500">Dashboard / Product / Add Product</p>
@@ -1874,10 +2073,10 @@ function App() {
             />
           </label>
           {error && <p className="text-xs text-rose-500">{error}</p>}
-          <div className="flex gap-3">
+          <div className="flex flex-wrap gap-3">
             <button
               type="submit"
-              className="rounded-full bg-blue-600 px-5 py-2 text-xs font-semibold text-white"
+              className="w-full rounded-full bg-blue-600 px-5 py-2 text-xs font-semibold text-white sm:w-auto"
             >
               {editingProduct ? "Update Product" : "Save Product"}
             </button>
@@ -1887,7 +2086,7 @@ function App() {
                 resetProductForm();
                 setActivePage("products");
               }}
-              className="rounded-full border border-gray-200 px-5 py-2 text-xs font-semibold text-gray-600"
+              className="w-full rounded-full border border-gray-200 px-5 py-2 text-xs font-semibold text-gray-600 sm:w-auto"
             >
               Cancel
             </button>
@@ -1895,13 +2094,17 @@ function App() {
         </div>
       </form>
 
-      <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-        <div className="flex items-center justify-between">
+      <div className="admin-panel rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-lg font-semibold text-gray-900">Image Product</h3>
             <p className="text-xs text-gray-500">Format SVG, PNG, JPG (max 4mb)</p>
           </div>
-          <button type="submit" form="product-form" className="rounded-full bg-blue-600 px-4 py-2 text-xs font-semibold text-white">
+          <button
+            type="submit"
+            form="product-form"
+            className="w-full rounded-full bg-blue-600 px-4 py-2 text-xs font-semibold text-white sm:w-auto"
+          >
             Save Product
           </button>
         </div>
@@ -1930,22 +2133,22 @@ function App() {
   );
 
   const renderCustomers = () => (
-    <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+    <div className="admin-panel rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-semibold text-gray-900">Customer</h2>
           <p className="text-xs text-gray-500">Dashboard / Customer</p>
         </div>
-        <div className="relative flex items-center gap-2">
+        <div className="relative flex flex-wrap items-center gap-2">
           <button
             data-dropdown-trigger
             onClick={() => setActiveDropdown((prev) => (prev === "customer-filter" ? "" : "customer-filter"))}
-            className="rounded-full border border-gray-200 px-4 py-2 text-xs font-semibold text-gray-600"
+            className="w-full rounded-full border border-gray-200 px-4 py-2 text-xs font-semibold text-gray-600 sm:w-auto"
           >
             Filter
           </button>
           {activeDropdown === "customer-filter" && (
-            <div data-dropdown-menu className="absolute right-0 top-12 z-10 w-44 rounded-xl border border-gray-200 bg-white p-2 text-xs shadow-lg">
+            <div data-dropdown-menu className="absolute right-0 top-12 z-10 w-44 max-w-[calc(100vw-1.5rem)] rounded-xl border border-gray-200 bg-white p-2 text-xs shadow-lg">
               {["All", "active", "inactive"].map((status) => (
                 <button
                   key={status}
@@ -1978,12 +2181,12 @@ function App() {
                 }))
               )
             }
-            className="rounded-full border border-gray-200 px-4 py-2 text-xs font-semibold text-gray-600"
+            className="w-full rounded-full border border-gray-200 px-4 py-2 text-xs font-semibold text-gray-600 sm:w-auto"
           >
             Export
           </button>
           <button
-            className="flex items-center gap-2 rounded-full bg-blue-600 px-4 py-2 text-xs font-semibold text-white"
+            className="flex w-full items-center justify-center gap-2 rounded-full bg-blue-600 px-4 py-2 text-xs font-semibold text-white sm:w-auto"
             onClick={() => {
               setEditingCustomer(null);
               setCustomerForm({
@@ -2022,8 +2225,82 @@ function App() {
           ))}
         </div>
       </div>
-      <div className="mt-5 overflow-hidden rounded-xl border border-gray-100">
-        <table className="w-full text-left text-xs">
+      <div className="mt-5 space-y-3 lg:hidden">
+        {pagedCustomers.map((customer) => (
+          <MobileCard
+            key={customer._id}
+            onClick={() => setDetailView({ type: "customer", data: customer })}
+          >
+            <div className="flex items-start gap-3">
+              <div className="h-14 w-14 overflow-hidden rounded-xl bg-gray-100">
+                <img
+                  src={buildImage(customer.avatarUrl || FALLBACK_ADMIN_AVATAR)}
+                  alt={customer.name}
+                  className="h-full w-full object-cover"
+                />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="font-semibold text-gray-800">{customer.name}</p>
+                    <p className="text-[11px] text-blue-600">ID{customer._id.slice(-4)}</p>
+                  </div>
+                  {customer.status && (
+                    <StatusPill
+                      label={customer.status}
+                      tone={customer.status === "active" ? "success" : "neutral"}
+                    />
+                  )}
+                </div>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <InfoField label="Email" value={customer.email || "-"} />
+                  <InfoField label="Phone" value={customer.phone || "-"} />
+                  <InfoField label="Purchases" value={formatPrice(customer.purchasesTotal || 0)} />
+                  <InfoField label="Orders" value={`${customer.orderCount || 0} Order`} />
+                  <InfoField label="Region" value={getRegionLabel(customer.address)} />
+                  <InfoField label="Address" value={customer.address || "-"} />
+                </div>
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <ActionButton
+                    icon={ICONS.eye}
+                    title="View"
+                    onClick={() => setDetailView({ type: "customer", data: customer })}
+                  />
+                  <ActionButton
+                    icon={ICONS.edit}
+                    title="Edit"
+                    onClick={() => {
+                      setEditingCustomer(customer);
+                      setCustomerForm({
+                        name: customer.name || "",
+                        email: customer.email || "",
+                        phone: customer.phone || "",
+                        purchasesTotal: customer.purchasesTotal || "",
+                        orderCount: customer.orderCount || "",
+                        address: customer.address || "",
+                        avatarUrl: customer.avatarUrl || "",
+                      });
+                      setActivePage("add-customer");
+                    }}
+                  />
+                  <ActionButton
+                    icon={ICONS.trash}
+                    title="Delete"
+                    onClick={() => handleDelete("customers", customer._id)}
+                  />
+                </div>
+              </div>
+            </div>
+          </MobileCard>
+        ))}
+        {!filteredCustomers.length && (
+          <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-6 text-center text-sm text-gray-400">
+            No customers yet.
+          </div>
+        )}
+      </div>
+      <div className="admin-table-shell mt-5 hidden rounded-xl border border-gray-100 lg:block">
+        <table className="min-w-[900px] w-full text-left text-xs">
           <thead className="bg-gray-50 text-gray-500">
             <tr>
               <th className="px-4 py-3"></th>
@@ -2110,7 +2387,7 @@ function App() {
           </tbody>
         </table>
       </div>
-      <div className="mt-4 flex items-center justify-between text-xs text-gray-500">
+      <div className="mt-4 flex flex-col gap-2 text-xs text-gray-500 sm:flex-row sm:items-center sm:justify-between">
         <span>
           Page {customerPage} of {Math.max(1, Math.ceil(filteredCustomers.length / customerPageSize))}
         </span>
@@ -2139,7 +2416,7 @@ function App() {
   );
 
   const renderAddCustomer = () => (
-    <form onSubmit={handleCustomerSubmit} className="max-w-2xl rounded-2xl border border-blue-100 bg-blue-50/40 p-6 shadow-sm">
+    <form onSubmit={handleCustomerSubmit} className="admin-panel max-w-2xl rounded-2xl border border-blue-100 bg-blue-50/40 p-6 shadow-sm">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-semibold text-gray-900">Customer</h2>
@@ -2160,7 +2437,7 @@ function App() {
         </label>
         <label className="text-xs font-semibold text-gray-600">
           Customer Photo
-          <div className="mt-2 flex items-center gap-3">
+          <div className="mt-2 flex flex-wrap items-center gap-3">
             <div className="h-14 w-14 overflow-hidden rounded-xl bg-gray-100">
               <img
                 src={buildImage(customerForm.avatarUrl || FALLBACK_ADMIN_AVATAR)}
@@ -2243,22 +2520,22 @@ function App() {
   );
 
   const renderOrders = () => (
-    <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+    <div className="admin-panel rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-xl font-semibold text-gray-900">Orders</h2>
           <p className="text-xs text-gray-500">Dashboard / Orders / All Orders</p>
         </div>
-        <div className="relative flex items-center gap-2">
+        <div className="relative flex flex-wrap items-center gap-2">
           <button
             data-dropdown-trigger
             onClick={() => setActiveDropdown((prev) => (prev === "order-filter" ? "" : "order-filter"))}
-            className="rounded-full border border-gray-200 px-4 py-2 text-xs font-semibold text-gray-600"
+            className="w-full rounded-full border border-gray-200 px-4 py-2 text-xs font-semibold text-gray-600 sm:w-auto"
           >
             Filter
           </button>
           {activeDropdown === "order-filter" && (
-            <div data-dropdown-menu className="absolute right-0 top-12 z-10 w-44 rounded-xl border border-gray-200 bg-white p-2 text-xs shadow-lg">
+            <div data-dropdown-menu className="absolute right-0 top-12 z-10 w-44 max-w-[calc(100vw-1.5rem)] rounded-xl border border-gray-200 bg-white p-2 text-xs shadow-lg">
               {["All", "Paid", "Unpaid"].map((status) => (
                 <button
                   key={status}
@@ -2290,12 +2567,12 @@ function App() {
                 }))
               )
             }
-            className="rounded-full border border-gray-200 px-4 py-2 text-xs font-semibold text-gray-600"
+            className="w-full rounded-full border border-gray-200 px-4 py-2 text-xs font-semibold text-gray-600 sm:w-auto"
           >
             Export
           </button>
           <button
-            className="flex items-center gap-2 rounded-full bg-blue-600 px-4 py-2 text-xs font-semibold text-white"
+            className="flex w-full items-center justify-center gap-2 rounded-full bg-blue-600 px-4 py-2 text-xs font-semibold text-white sm:w-auto"
             onClick={() => setOrderFormOpen((prev) => !prev)}
           >
             {ICONS.plus} New Order
@@ -2364,9 +2641,9 @@ function App() {
                   setError("Failed to create order.");
                 });
           }}
-          className="mt-4 rounded-2xl border border-blue-100 bg-blue-50/40 p-5"
+          className="admin-panel mt-4 rounded-2xl border border-blue-100 bg-blue-50/40 p-5"
         >
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <h3 className="text-sm font-semibold text-gray-700">Add Order</h3>
             <button
               type="button"
@@ -2512,7 +2789,7 @@ function App() {
               />
             </label>
           </div>
-          <div className="mt-4 flex items-center gap-3">
+          <div className="mt-4 flex flex-wrap items-center gap-3">
             <div className="h-16 w-16 overflow-hidden rounded-xl bg-gray-100">
               <img
                 src={buildImage(orderForm.itemImageUrl || FALLBACK_PRODUCT_IMAGE)}
@@ -2535,14 +2812,14 @@ function App() {
             </label>
           </div>
           {error && <p className="mt-3 text-xs text-rose-500">{error}</p>}
-          <div className="mt-4 flex gap-3">
-            <button type="submit" className="rounded-full bg-blue-600 px-5 py-2 text-xs font-semibold text-white">
+          <div className="mt-4 flex flex-wrap gap-3">
+            <button type="submit" className="w-full rounded-full bg-blue-600 px-5 py-2 text-xs font-semibold text-white sm:w-auto">
               Save Order
             </button>
             <button
               type="button"
               onClick={() => setOrderFormOpen(false)}
-              className="rounded-full border border-blue-100 px-5 py-2 text-xs font-semibold text-gray-600"
+              className="w-full rounded-full border border-blue-100 px-5 py-2 text-xs font-semibold text-gray-600 sm:w-auto"
             >
               Cancel
             </button>
@@ -2565,8 +2842,128 @@ function App() {
           ))}
         </div>
       </div>
-      <div className="mt-5 overflow-hidden rounded-xl border border-gray-100">
-        <table className="w-full text-left text-xs">
+      <div className="mt-5 space-y-3 lg:hidden">
+        {pagedOrders.map((order) => {
+          const requestPending = String(order?.serviceRequest?.status || "").toLowerCase() === "pending";
+          const requestType = String(order?.serviceRequest?.type || "").toLowerCase();
+          const matchingConversation = conversations.find(
+            (conversation) =>
+              String(conversation.customerEmail || "").toLowerCase() ===
+              String(order.customerEmail || "").toLowerCase()
+          );
+          const approveKey = `${order._id}:approve`;
+          const rejectKey = `${order._id}:reject`;
+
+          return (
+            <MobileCard
+              key={order._id}
+              onClick={() => setDetailView({ type: "order", data: order })}
+            >
+              <div className="flex items-start gap-3">
+                <div className="h-14 w-14 overflow-hidden rounded-xl bg-gray-100">
+                  <img
+                    src={buildImage(order.items?.[0]?.imageUrl || FALLBACK_PRODUCT_IMAGE)}
+                    alt={order.items?.[0]?.title || "Product"}
+                    className="h-full w-full object-cover"
+                  />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-gray-800">{order.orderNumber}</p>
+                      <p className="truncate text-[11px] text-gray-500">
+                        {order.items?.[0]?.title || "Product"}
+                      </p>
+                    </div>
+                    <StatusPill label={order.status} tone={getOrderStatusTone(order.status)} />
+                  </div>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <InfoField label="Customer" value={order.customerName || "-"} />
+                    <InfoField
+                      label="Total"
+                      value={
+                        <>
+                          <div>{formatPrice(getTotalWithGst(order.total))}</div>
+                          <div className="text-xs font-normal text-gray-400">
+                            GST incl. {formatPrice(getGstAmount(order.total))}
+                          </div>
+                        </>
+                      }
+                    />
+                    <InfoField
+                      label="Date"
+                      value={order.createdAt ? new Date(order.createdAt).toLocaleDateString() : "-"}
+                    />
+                    <InfoField
+                      label="Payment"
+                      value={<StatusPill label={order.paymentStatus} tone={order.paymentStatus === "Paid" ? "success" : "warning"} />}
+                    />
+                  </div>
+                  {requestPending && (
+                    <p className="mt-3 text-xs font-semibold text-amber-700">
+                      Pending {requestType === "cancel" ? "cancellation" : "return"} request
+                    </p>
+                  )}
+                  <div className="mt-4 flex flex-wrap items-center gap-2">
+                    <ActionButton
+                      icon={ICONS.eye}
+                      title="View"
+                      onClick={() => setDetailView({ type: "order", data: order })}
+                    />
+                    <ActionButton icon={ICONS.edit} title="Edit" />
+                    <ActionButton
+                      icon={ICONS.trash}
+                      title="Delete"
+                      onClick={() => handleDelete("orders", order._id)}
+                    />
+                  </div>
+                  {requestPending && (
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      <button
+                        type="button"
+                        disabled={requestActionKey === approveKey || requestActionKey === rejectKey}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleServiceRequestDecision({
+                            orderId: order._id,
+                            decision: "approve",
+                            conversationId: matchingConversation?._id,
+                          });
+                        }}
+                        className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold text-emerald-700 disabled:opacity-60"
+                      >
+                        Approve
+                      </button>
+                      <button
+                        type="button"
+                        disabled={requestActionKey === approveKey || requestActionKey === rejectKey}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleServiceRequestDecision({
+                            orderId: order._id,
+                            decision: "reject",
+                            conversationId: matchingConversation?._id,
+                          });
+                        }}
+                        className="rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-[10px] font-semibold text-rose-700 disabled:opacity-60"
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </MobileCard>
+          );
+        })}
+        {!filteredOrders.length && (
+          <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 p-6 text-center text-sm text-gray-400">
+            No orders yet.
+          </div>
+        )}
+      </div>
+      <div className="admin-table-shell mt-5 hidden rounded-xl border border-gray-100 lg:block">
+        <table className="min-w-[1100px] w-full text-left text-xs">
           <thead className="bg-gray-50 text-gray-500">
             <tr>
               <th className="px-4 py-3"></th>
@@ -2630,15 +3027,7 @@ function App() {
                   <td className="px-4 py-3">
                     <StatusPill
                       label={order.status}
-                      tone={
-                        order.status === "Cancelled"
-                          ? "danger"
-                          : order.status === "Completed"
-                            ? "success"
-                            : order.status === "Returned"
-                              ? "warning"
-                              : "info"
-                      }
+                      tone={getOrderStatusTone(order.status)}
                     />
                     {requestPending && (
                       <p className="mt-1 text-[10px] font-semibold text-amber-700">
@@ -2704,7 +3093,7 @@ function App() {
           </tbody>
         </table>
       </div>
-      <div className="mt-4 flex items-center justify-between text-xs text-gray-500">
+      <div className="mt-4 flex flex-col gap-2 text-xs text-gray-500 sm:flex-row sm:items-center sm:justify-between">
         <span>
           Page {orderPage} of {Math.max(1, Math.ceil(filteredOrders.length / orderPageSize))}
         </span>
@@ -2733,18 +3122,18 @@ function App() {
   );
 
   const renderAccount = () => (
-    <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+    <div className="admin-panel rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
       <div>
         <h2 className="text-xl font-semibold text-gray-900">Account & Settings</h2>
         <p className="text-xs text-gray-500">Dashboard / Profile</p>
       </div>
-      <div className="mt-6 flex flex-wrap gap-2 rounded-full border border-gray-100 bg-gray-50 p-2 text-xs">
+      <div className="no-scrollbar mt-6 flex gap-2 overflow-x-auto rounded-full border border-gray-100 bg-gray-50 p-2 text-xs">
         {["account", "security", "notification"].map((tab) => (
           <button
             key={tab}
             onClick={() => setAccountTab(tab)}
             className={classNames(
-              "flex-1 rounded-full px-4 py-2 font-semibold",
+              "min-w-[120px] rounded-full px-4 py-2 font-semibold",
               accountTab === tab ? "bg-blue-100 text-blue-700" : "text-gray-500"
             )}
           >
@@ -2761,7 +3150,7 @@ function App() {
             </div>
           )}
           <div className="rounded-2xl border border-blue-100 bg-blue-50/40 p-5">
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-4">
               <div className="h-16 w-16 overflow-hidden rounded-2xl bg-gray-200">
                 <img src={buildImage(adminAvatar)} alt="Profile" className="h-full w-full object-cover" />
               </div>
@@ -2829,11 +3218,11 @@ function App() {
                 />
               </label>
             </div>
-            <div className="mt-4 flex gap-3">
+            <div className="mt-4 flex flex-wrap gap-3">
               <button
                 type="submit"
                 disabled={!auth?.token}
-                className="rounded-full bg-blue-600 px-5 py-2 text-xs font-semibold text-white disabled:opacity-60"
+                className="w-full rounded-full bg-blue-600 px-5 py-2 text-xs font-semibold text-white disabled:opacity-60 sm:w-auto"
               >
                 Update
               </button>
@@ -2842,9 +3231,14 @@ function App() {
           </div>
 
           <div className="rounded-2xl border border-gray-100 bg-white p-5">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <h3 className="text-sm font-semibold text-gray-700">Contact Detail</h3>
-              <button type="button" className="rounded-full border border-gray-200 px-3 py-1 text-xs font-semibold text-gray-600">Edit</button>
+              <button
+                type="button"
+                className="w-full rounded-full border border-gray-200 px-3 py-1 text-xs font-semibold text-gray-600 sm:w-auto"
+              >
+                Edit
+              </button>
             </div>
             <div className="mt-4 grid gap-4 md:grid-cols-3">
               <label className="text-xs font-semibold text-gray-600">
@@ -2880,7 +3274,7 @@ function App() {
       )}
 
       {accountTab === "security" && (
-        <form onSubmit={handlePasswordUpdate} className="mt-6 rounded-2xl border border-blue-100 bg-blue-50/40 p-6">
+        <form onSubmit={handlePasswordUpdate} className="admin-panel mt-6 rounded-2xl border border-blue-100 bg-blue-50/40 p-6">
           <h3 className="text-lg font-semibold text-gray-800">Password</h3>
           <div className="mt-4 grid gap-4 md:grid-cols-3">
             <label className="text-xs font-semibold text-gray-600">
@@ -2917,11 +3311,11 @@ function App() {
             <p>Use special characters (e.g. !, @, #, $). </p>
           </div>
           {error && <p className="mt-3 text-xs text-rose-500">{error}</p>}
-          <div className="mt-4 flex gap-3">
+          <div className="mt-4 flex flex-wrap gap-3">
             <button
               type="submit"
               disabled={!auth?.token}
-              className="rounded-full bg-blue-600 px-5 py-2 text-xs font-semibold text-white disabled:opacity-60"
+              className="w-full rounded-full bg-blue-600 px-5 py-2 text-xs font-semibold text-white disabled:opacity-60 sm:w-auto"
             >
               Update Password
             </button>
@@ -2931,7 +3325,7 @@ function App() {
       )}
 
       {accountTab === "notification" && (
-        <div className="mt-6 rounded-2xl border border-gray-100 bg-white p-6 text-sm text-gray-500">
+        <div className="admin-panel mt-6 rounded-2xl border border-gray-100 bg-white p-6 text-sm text-gray-500">
           Notification preferences will live here.
         </div>
       )}
@@ -2939,9 +3333,9 @@ function App() {
   );
 
   const renderSalesReport = () => (
-    <div className="grid gap-6 lg:grid-cols-[1.4fr,1fr]">
-      <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-        <div className="flex items-center justify-between">
+    <div className="grid gap-4 lg:gap-6 lg:grid-cols-[1.4fr,1fr]">
+      <div className="admin-panel rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold text-gray-900">Sales Report</h2>
             <p className="text-xs text-gray-500">Last 12 months overview</p>
@@ -2950,13 +3344,13 @@ function App() {
             {orders.length} Orders
           </span>
         </div>
-        <div className="mt-4 flex flex-wrap gap-2">
+        <div className="no-scrollbar mt-4 flex gap-2 overflow-x-auto pb-1">
           {displaySales.labels.map((label, index) => (
             <button
               key={label}
               onClick={() => setSalesMonthIndex(index)}
               className={classNames(
-                "rounded-full px-3 py-1 text-[10px] font-semibold uppercase",
+                "shrink-0 rounded-full px-3 py-1 text-[10px] font-semibold uppercase",
                 salesMonthIndex === index ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-500"
               )}
             >
@@ -3051,21 +3445,21 @@ function App() {
 
   const renderReviews = () => (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center">
           <div className="relative">
             <input
               value={reviewSearch}
               onChange={(e) => setReviewSearch(e.target.value)}
               placeholder="Search by product or customer"
-              className="w-72 rounded-xl border border-gray-200 bg-white px-4 py-2 pl-10 text-sm"
+              className="w-full rounded-xl border border-gray-200 bg-white px-4 py-2 pl-10 text-sm sm:w-72"
             />
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">{ICONS.search}</span>
           </div>
           <select
             value={reviewStatus}
             onChange={(e) => setReviewStatus(e.target.value)}
-            className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600"
+            className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600 sm:w-auto"
           >
             <option value="all">All status</option>
             <option value="pending">Pending</option>
@@ -3076,7 +3470,7 @@ function App() {
         <select
           value={reviewSortBy}
           onChange={(e) => setReviewSortBy(e.target.value)}
-          className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600"
+          className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600 sm:w-auto"
         >
           <option value="mostRecent">Sort By: Most Recent</option>
           <option value="highestRating">Sort By: Highest Rating</option>
@@ -3084,8 +3478,69 @@ function App() {
         </select>
       </div>
 
-      <div className="overflow-x-auto rounded-2xl border border-gray-200 bg-white">
-        <table className="min-w-full text-sm">
+      <div className="space-y-3 lg:hidden">
+        {reviews.map((review) => (
+          <MobileCard key={review._id}>
+            <div className="flex items-start gap-3">
+              <div className="h-14 w-14 overflow-hidden rounded-xl bg-gray-100">
+                <img
+                  src={buildImage(review.productImageUrl || FALLBACK_PRODUCT_IMAGE)}
+                  alt={review.productName}
+                  className="h-full w-full object-cover"
+                />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="font-semibold text-gray-800">{review.productName}</p>
+                    <p className="text-xs text-gray-400">{formatDate(review.createdAt)} {formatTime(review.createdAt)}</p>
+                  </div>
+                  <div className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-600">
+                    {ICONS.star}
+                    <span className="text-gray-700">{Number(review.rating || 0).toFixed(1)}</span>
+                  </div>
+                </div>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <InfoField label="Customer" value={review.customerName || "-"} />
+                  <InfoField label="Location" value={review.customerLocation || "Unknown"} />
+                </div>
+                <div className="mt-3 rounded-xl bg-gray-50 p-3 text-sm italic text-gray-600">
+                  {review.reviewText}
+                </div>
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                  <StatusPill label={review.status || "pending"} tone={getReviewStatusTone(review.status)} />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={reviewActionId === review._id || review.status === "approved"}
+                      onClick={() => handleReviewStatusChange(review._id, "approved")}
+                      className="rounded-lg border border-blue-500 px-3 py-1 text-xs font-semibold text-blue-600 disabled:opacity-50"
+                    >
+                      Approve
+                    </button>
+                    <button
+                      type="button"
+                      disabled={reviewActionId === review._id || review.status === "cancelled"}
+                      onClick={() => handleReviewStatusChange(review._id, "cancelled")}
+                      className="rounded-lg border border-rose-400 px-3 py-1 text-xs font-semibold text-rose-500 disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </MobileCard>
+        ))}
+        {!reviews.length && (
+          <div className="rounded-xl border border-dashed border-gray-200 bg-white p-8 text-center text-sm text-gray-400">
+            No reviews found.
+          </div>
+        )}
+      </div>
+
+      <div className="admin-table-shell hidden overflow-x-auto rounded-2xl border border-gray-200 bg-white lg:block">
+        <table className="min-w-[980px] text-sm">
           <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500">
             <tr>
               <th className="px-5 py-3">Product Name</th>
@@ -3130,13 +3585,7 @@ function App() {
                   <div className="mt-2 text-xs">
                     <StatusPill
                       label={review.status || "pending"}
-                      tone={
-                        review.status === "approved"
-                          ? "success"
-                          : review.status === "cancelled"
-                          ? "danger"
-                          : "warning"
-                      }
+                      tone={getReviewStatusTone(review.status)}
                     />
                   </div>
                 </td>
@@ -3173,7 +3622,7 @@ function App() {
         </table>
       </div>
 
-      <div className="flex items-center justify-between text-sm text-gray-500">
+      <div className="flex flex-col gap-2 text-sm text-gray-500 sm:flex-row sm:items-center sm:justify-between">
         <span>
           Page {reviewPage} of {Math.max(1, Math.ceil(reviewTotal / reviewPageSize))}
         </span>
@@ -3200,8 +3649,13 @@ function App() {
   );
 
   const renderMessages = () => (
-    <div className="grid min-h-[70vh] gap-4 rounded-2xl border border-gray-200 bg-white p-4 lg:grid-cols-[340px,1fr]">
-      <div className="border-r border-gray-100 pr-3">
+    <div className="admin-panel grid min-h-[70vh] gap-4 rounded-2xl border border-gray-200 bg-white p-4 lg:grid-cols-[340px,1fr]">
+      <div
+        className={classNames(
+          "border-b border-gray-100 pb-3 lg:border-b-0 lg:border-r lg:pb-0 lg:pr-3",
+          mobileMessageView === "chat" ? "hidden lg:block" : "block"
+        )}
+      >
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-lg font-semibold text-gray-800">Contacts</h3>
           <span className="text-sm text-gray-400">{conversations.length}</span>
@@ -3215,12 +3669,15 @@ function App() {
           />
           <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">{ICONS.search}</span>
         </div>
-        <div className="mt-3 max-h-[62vh] space-y-1 overflow-y-auto pr-1">
+        <div className="mt-3 max-h-[40vh] space-y-1 overflow-y-auto pr-1 lg:max-h-[62vh]">
           {conversations.map((conversation) => (
             <button
               type="button"
               key={conversation._id}
-              onClick={() => setSelectedConversationId(conversation._id)}
+              onClick={() => {
+                setSelectedConversationId(conversation._id);
+                setMobileMessageView("chat");
+              }}
               className={classNames(
                 "w-full rounded-xl border px-3 py-2 text-left",
                 selectedConversationId === conversation._id
@@ -3267,9 +3724,21 @@ function App() {
         </div>
       </div>
 
-      <div className="flex min-h-[65vh] flex-col">
-        <div className="mb-3 flex items-center justify-between border-b border-gray-100 pb-3">
+      <div
+        className={classNames(
+          "min-h-[65vh] flex-col",
+          mobileMessageView === "list" ? "hidden lg:flex" : "flex"
+        )}
+      >
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 pb-3">
           <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setMobileMessageView("list")}
+              className="rounded-lg border border-gray-200 px-2 py-1 text-xs font-semibold text-gray-600 lg:hidden"
+            >
+              Back
+            </button>
             {selectedConversation ? (
               <>
                 <div className="h-12 w-12 overflow-hidden rounded-xl bg-gray-200">
@@ -3294,13 +3763,13 @@ function App() {
           <button
             type="button"
             onClick={() => setNewMessageOpen(true)}
-            className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white"
+            className="w-full rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white sm:w-auto"
           >
             New Message
           </button>
         </div>
 
-        <div className="flex-1 space-y-3 overflow-y-auto rounded-xl bg-gray-50 p-4">
+        <div className="flex-1 space-y-3 overflow-y-auto rounded-xl bg-gray-50 p-3 sm:p-4">
           {messagesLoading && <p className="text-sm text-gray-400">Loading messages...</p>}
           {!messagesLoading && !selectedConversation && (
             <div className="grid h-full place-items-center text-center text-gray-500">
@@ -3331,7 +3800,7 @@ function App() {
                 <div
                   key={message._id}
                   className={classNames(
-                    "max-w-[70%] rounded-2xl px-4 py-3 text-sm shadow-sm",
+                    "max-w-[88%] rounded-2xl px-4 py-3 text-sm shadow-sm sm:max-w-[70%]",
                     message.sender === "admin"
                       ? "ml-auto bg-white text-gray-800"
                       : "bg-blue-100 text-gray-800"
@@ -3394,18 +3863,21 @@ function App() {
           )}
         </div>
 
-        <form onSubmit={handleSendMessage} className="mt-3 flex items-center gap-2 rounded-xl border border-gray-200 bg-white p-2">
+        <form
+          onSubmit={handleSendMessage}
+          className="mt-3 flex flex-col gap-2 rounded-xl border border-gray-200 bg-white p-2 sm:flex-row sm:items-center"
+        >
           <input
             value={outgoingMessage}
             onChange={(e) => setOutgoingMessage(e.target.value)}
             disabled={!selectedConversation || sendingMessage}
             placeholder="Your message"
-            className="flex-1 rounded-lg border border-transparent px-3 py-2 text-sm outline-none focus:border-blue-200"
+            className="min-w-0 flex-1 rounded-lg border border-transparent px-3 py-2 text-sm outline-none focus:border-blue-200"
           />
           <button
             type="submit"
             disabled={!selectedConversation || !outgoingMessage.trim() || sendingMessage}
-            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 sm:w-auto"
           >
             Send
             {ICONS.send}
@@ -3416,12 +3888,12 @@ function App() {
   );
 
   const renderErrorLog = () => (
-    <div className="rounded-2xl border border-rose-100 bg-rose-50/60 p-6">
-      <div className="flex items-center justify-between">
+    <div className="admin-panel rounded-2xl border border-rose-100 bg-rose-50/60 p-6">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-lg font-semibold text-rose-700">Backend Error Log</h3>
-        <div className="flex items-center gap-3 text-xs text-rose-600">
+        <div className="flex flex-wrap items-center gap-3 text-xs text-rose-600">
           <span>
-            {errorTotal} total • Page {errorPage}
+            {errorTotal} backend | {errorLog.length} local | Page {errorPage}
           </span>
           <button onClick={() => setErrorLog([])} className="font-semibold">
             Clear Local
@@ -3431,6 +3903,22 @@ function App() {
       {!auth?.token && (
         <div className="mt-4 rounded-xl border border-rose-100 bg-white/70 p-6 text-sm text-rose-600">
           Sign in to load stored error logs.
+        </div>
+      )}
+      {errorLog.length > 0 && (
+        <div className="mt-4 rounded-xl border border-rose-100 bg-white/80 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-semibold text-rose-700">Local client errors</p>
+            <span className="text-xs text-rose-500">{errorLog.length} captured</span>
+          </div>
+          <div className="mt-3 space-y-2 text-xs text-rose-700">
+            {errorLog.slice(0, 5).map((entry) => (
+              <div key={entry.id} className="rounded-lg bg-rose-50/70 p-2">
+                <div className="font-semibold">{entry.at}</div>
+                <div className="mt-1 break-words">{entry.message}</div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
       {auth?.token && serverErrorLog.length === 0 && (
@@ -3451,7 +3939,7 @@ function App() {
                     })
                   : "-"}
               </span>{" "}
-              — {entry.message}
+              - {entry.message}
               {entry.endpoint ? (
                 <div className="text-[10px] text-rose-500">
                   {entry.method} {entry.endpoint}
@@ -3464,7 +3952,7 @@ function App() {
               ) : null}
             </div>
           ))}
-          <div className="mt-3 flex items-center justify-between">
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
             <button
               onClick={() => setErrorPage((p) => Math.max(p - 1, 1))}
               className="rounded-full border border-rose-200 px-3 py-1 text-[10px] font-semibold text-rose-600"
@@ -3490,8 +3978,8 @@ function App() {
     const { type, data } = detailView;
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-        <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl">
-          <div className="flex items-center justify-between">
+        <div className="admin-panel max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-xl">
+          <div className="flex items-center justify-between gap-3">
             <h3 className="text-lg font-semibold text-gray-900">
               {type === "product" ? "Product Details" : type === "customer" ? "Customer Details" : "Order Details"}
             </h3>
@@ -3516,7 +4004,7 @@ function App() {
                   </div>
                 </div>
                 <p>{data.description || "No description"}</p>
-                <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="grid gap-2 text-xs sm:grid-cols-2">
                   <div>Price: {formatPrice(data.price)}</div>
                   <div>Quantity: {data.quantity || 0}</div>
                   <div>Category: {data.category || "-"}</div>
@@ -3539,7 +4027,7 @@ function App() {
                     <p className="text-xs text-gray-400">{data.email || "-"}</p>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="grid gap-2 text-xs sm:grid-cols-2">
                   <div>Phone: {data.phone || "-"}</div>
                   <div>Status: {data.status || "-"}</div>
                   <div>Orders: {data.orderCount || 0}</div>
@@ -3563,7 +4051,7 @@ function App() {
                     <p className="text-xs text-gray-400">{data.customerName}</p>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="grid gap-2 text-xs sm:grid-cols-2">
                   <div>Status: {data.status}</div>
                   <div>Payment: {data.paymentStatus}</div>
                   <div>Total: {formatPrice(getTotalWithGst(data.total || 0))}</div>
@@ -3580,7 +4068,7 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#f5f7fb] text-gray-900">
+    <div className="admin-app min-h-screen bg-[#f5f7fb] text-gray-900">
       <div className="flex min-h-screen">
         {sidebarOpen && (
           <div
@@ -3590,130 +4078,161 @@ function App() {
         )}
         <aside
           className={classNames(
-            "fixed left-0 top-0 z-50 flex h-full flex-col overflow-y-auto no-scrollbar border-r border-gray-200 bg-white px-5 py-6 transition-transform lg:fixed lg:translate-x-0",
+            "admin-sidebar fixed inset-y-0 left-0 z-50 flex flex-col overflow-hidden border-r border-gray-200 bg-white px-5 py-6 transition-transform lg:fixed lg:translate-x-0",
             sidebarOpen ? "translate-x-0" : "-translate-x-full",
-            "w-64",
+            "w-[86vw] max-w-72 lg:w-64",
             "lg:flex"
           )}
         >
-          <div className="flex items-center gap-3 rounded-2xl border border-gray-100 bg-gray-50 p-3">
-            <div className="h-10 w-10 overflow-hidden rounded-full bg-gray-200">
-              <img src={buildImage(companyLogo)} alt="Company logo" className="h-full w-full object-cover" />
+          <div className="admin-sidebar-scroll flex min-h-0 flex-1 flex-col overflow-y-auto pr-1">
+            <div className="mb-4 flex items-center justify-between lg:hidden">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-400">Navigation</p>
+              <button
+                type="button"
+                onClick={() => setSidebarOpen(false)}
+                className="rounded-lg border border-gray-200 p-1.5 text-gray-500"
+              >
+                {ICONS.close}
+              </button>
             </div>
-            <>
-              <div className="flex-1">
-                <p className="text-xs text-gray-400">Company</p>
-                <p className="text-sm font-semibold text-gray-800">{BRAND_NAME}</p>
-              </div>
-              <label className="cursor-pointer rounded-full border border-gray-200 px-3 py-1 text-[10px] font-semibold text-gray-500">
-                Upload
-                <input
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={(e) =>
-                    handleImageUpload(e.target.files?.[0], (url) => {
-                      const next = { ...profileForm, companyLogoUrl: url };
-                      setProfileForm(next);
-                      persistProfile(next);
-                    })
-                  }
-                />
-              </label>
-            </>
-          </div>
-          <div className="mt-6">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-400">General</p>
-            <div className="mt-3 space-y-2">
-              {NAV_ITEMS.map((item) => (
-                <button
-                  key={item.id}
-                  onClick={() => {
-                    setActivePage(item.id);
-                    setSidebarOpen(false);
-                  }}
-                  className={classNames(
-                    "flex w-full items-center justify-between rounded-xl px-3 py-2 text-sm font-medium",
-                    activePage === item.id ? "bg-blue-50 text-blue-700" : "text-gray-500 hover:bg-gray-50"
-                  )}
-                >
-                  <span className="flex items-center gap-3">
-                    {ICONS[item.icon]}
-                    {item.label}
-                  </span>
-                  {item.countKey && (
-                    <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] text-gray-500">
-                      {navCountMap[item.countKey] ?? 0}
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="mt-6">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-400">Tools</p>
-            <div className="mt-3 space-y-2">
-              {TOOL_ITEMS.map((item) => (
-                <button
-                  key={item.id}
-                  onClick={() => {
-                    setActivePage(item.id);
-                    setSidebarOpen(false);
-                  }}
-                  className={classNames(
-                    "flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium",
-                    activePage === item.id ? "bg-blue-50 text-blue-700" : "text-gray-500 hover:bg-gray-50"
-                  )}
-                >
-                  {ICONS[item.icon]}
-                  {item.label}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="mt-auto rounded-2xl border border-gray-100 p-3">
-            <div className="flex items-center gap-3">
-              <div className="h-10 w-10 overflow-hidden rounded-lg bg-gray-200">
-                <img src={buildImage(adminAvatar)} alt="Admin avatar" className="h-full w-full object-cover" />
+            <div className="flex items-center gap-3 rounded-2xl border border-gray-100 bg-gray-50 p-3">
+              <div className="h-10 w-10 overflow-hidden rounded-full bg-gray-200">
+                <img src={buildImage(companyLogo)} alt="Company logo" className="h-full w-full object-cover" />
               </div>
               <>
                 <div className="flex-1">
-                  <p className="text-sm font-semibold text-gray-800">{auth?.user?.name || "Admin Name"}</p>
-                  <p className="text-xs text-gray-400">{auth?.user?.role || "Admin"}</p>
+                  <p className="text-xs text-gray-400">Company</p>
+                  <p className="text-sm font-semibold text-gray-800">{BRAND_NAME}</p>
                 </div>
-                {ICONS.chevron}
+                <label className="cursor-pointer rounded-full border border-gray-200 px-3 py-1 text-[10px] font-semibold text-gray-500">
+                  Upload
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) =>
+                      handleImageUpload(e.target.files?.[0], (url) => {
+                        const next = { ...profileForm, companyLogoUrl: url };
+                        setProfileForm(next);
+                        persistProfile(next);
+                      })
+                    }
+                  />
+                </label>
               </>
+            </div>
+            <div className="mt-6">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-400">General</p>
+              <div className="mt-3 space-y-2">
+                {NAV_ITEMS.map((item) => (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      setActivePage(item.id);
+                      setSidebarOpen(false);
+                    }}
+                    className={classNames(
+                      "flex w-full items-center justify-between rounded-xl px-3 py-2 text-sm font-medium",
+                      activePage === item.id ? "bg-blue-50 text-blue-700" : "text-gray-500 hover:bg-gray-50"
+                    )}
+                  >
+                    <span className="flex items-center gap-3">
+                      {ICONS[item.icon]}
+                      {item.label}
+                    </span>
+                    {item.countKey && (
+                      <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] text-gray-500">
+                        {navCountMap[item.countKey] ?? 0}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="mt-6">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-400">Tools</p>
+              <div className="mt-3 space-y-2">
+                {TOOL_ITEMS.map((item) => (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      setActivePage(item.id);
+                      setSidebarOpen(false);
+                    }}
+                    className={classNames(
+                      "flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium",
+                      activePage === item.id ? "bg-blue-50 text-blue-700" : "text-gray-500 hover:bg-gray-50"
+                    )}
+                  >
+                    {ICONS[item.icon]}
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="mt-auto rounded-2xl border border-gray-100 p-3">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 overflow-hidden rounded-lg bg-gray-200">
+                  <img src={buildImage(adminAvatar)} alt="Admin avatar" className="h-full w-full object-cover" />
+                </div>
+                <>
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold text-gray-800">{auth?.user?.name || "Admin Name"}</p>
+                    <p className="text-xs text-gray-400">{auth?.user?.role || "Admin"}</p>
+                  </div>
+                  {ICONS.chevron}
+                </>
+              </div>
+              <div className="mt-3 grid gap-2">
+                {auth ? (
+                  <button
+                    type="button"
+                    onClick={logout}
+                    className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-600"
+                  >
+                    Logout
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setAuthModalOpen(true)}
+                    className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white"
+                  >
+                    Sign in
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </aside>
 
-        <main className={classNames("flex-1", "lg:pl-64")}>
+        <main className={classNames("min-w-0 flex-1", "lg:pl-64")}>
           <header
             className={classNames(
-              "fixed top-0 z-40 border-b border-gray-200 bg-white/90 backdrop-blur",
+              "admin-header-shell fixed top-0 z-40 border-b border-gray-200 bg-white/90 backdrop-blur",
               "lg:left-64",
               "left-0 right-0"
             )}
           >
-            <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-4">
-              <div className="flex items-center gap-4">
+            <div className="admin-header-inner flex flex-wrap items-center justify-between gap-4 px-6 py-4">
+              <div className="admin-header-left flex min-w-0 items-center gap-3 sm:gap-4">
                 <button
                   onClick={() => setSidebarOpen(true)}
                   className="rounded-xl border border-gray-200 p-2 lg:hidden"
                 >
-                  {ICONS.chevron}
+                  {ICONS.menu}
                 </button>
-                <div className="relative">
+                <div className="admin-header-search relative w-60">
                   <input
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder="Search product"
-                    className="w-60 rounded-full border border-gray-200 bg-gray-50 px-4 py-2 pl-10 text-sm"
+                    className="w-full rounded-full border border-gray-200 bg-gray-50 px-4 py-2 pl-10 text-sm"
                   />
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">{ICONS.search}</span>
                 </div>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="admin-header-actions flex flex-wrap items-center justify-end gap-2 sm:gap-3">
                 <div className="relative">
                   <button
                     data-dropdown-trigger
@@ -3728,7 +4247,10 @@ function App() {
                   )}
                   </button>
                   {activeDropdown === "messages" && (
-                    <div data-dropdown-menu className="absolute right-0 top-12 z-20 w-60 rounded-xl border border-gray-200 bg-white p-3 text-xs shadow-lg">
+                    <div
+                      data-dropdown-menu
+                      className="absolute right-0 top-12 z-20 w-60 max-w-[calc(100vw-1.5rem)] rounded-xl border border-gray-200 bg-white p-3 text-xs shadow-lg"
+                    >
                       <p className="mb-2 font-semibold text-gray-700">New Messages</p>
                       {conversations.slice(0, 3).map((conversation) => (
                         <button
@@ -3767,12 +4289,15 @@ function App() {
                   )}
                   </button>
                   {activeDropdown === "notifications" && (
-                    <div data-dropdown-menu className="absolute right-0 top-12 z-20 w-64 rounded-xl border border-gray-200 bg-white p-3 text-xs shadow-lg">
+                    <div
+                      data-dropdown-menu
+                      className="absolute right-0 top-12 z-20 w-64 max-w-[calc(100vw-1.5rem)] rounded-xl border border-gray-200 bg-white p-3 text-xs shadow-lg"
+                    >
                       <p className="mb-2 font-semibold text-gray-700">Notifications</p>
                       {orders.slice(0, 3).map((order) => (
                         <div key={order._id} className="rounded-lg px-2 py-2 hover:bg-gray-50">
                           <p className="font-semibold text-gray-700">{order.orderNumber}</p>
-                          <p className="text-[10px] text-gray-400">{order.status} • {order.customerName}</p>
+                          <p className="text-[10px] text-gray-400">{order.status} - {order.customerName}</p>
                         </div>
                       ))}
                       {!orders.length && (
@@ -3787,7 +4312,7 @@ function App() {
                       <img src={buildImage(adminAvatar)} alt="Admin avatar" className="h-full w-full object-cover" />
                     ) : null}
                   </div>
-                  <div className="text-right">
+                  <div className="hidden text-right sm:block">
                     <p className="text-sm font-semibold">{auth?.user?.name || "Admin"}</p>
                     <p className="text-xs text-gray-400">{auth?.user?.role || "Admin"}</p>
                   </div>
@@ -3795,25 +4320,61 @@ function App() {
                 {auth ? (
                   <button
                     onClick={logout}
-                    className="rounded-full border border-gray-200 px-4 py-2 text-xs font-semibold text-gray-600"
+                    className="hidden rounded-full border border-gray-200 px-4 py-2 text-xs font-semibold text-gray-600 sm:inline-flex"
                   >
                     Logout
                   </button>
                 ) : (
                   <button
                     onClick={() => setAuthModalOpen(true)}
-                    className="rounded-full bg-blue-600 px-4 py-2 text-xs font-semibold text-white"
+                    className="hidden rounded-full bg-blue-600 px-4 py-2 text-xs font-semibold text-white sm:inline-flex"
                   >
                     Sign in
+                  </button>
+                )}
+                {auth ? (
+                  <button
+                    type="button"
+                    onClick={logout}
+                    className="inline-flex rounded-xl border border-gray-200 p-2 text-gray-600 sm:hidden"
+                  >
+                    {ICONS.logout}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setAuthModalOpen(true)}
+                    className="inline-flex rounded-xl bg-blue-600 p-2 text-white sm:hidden"
+                  >
+                    Sign
                   </button>
                 )}
               </div>
             </div>
           </header>
 
-          <div className="px-6 pb-6 pt-24">
+          <div className="admin-main-shell px-6 pb-6 pt-24">
+            <div className="mb-4 lg:hidden">
+              <div className="admin-mobile-nav no-scrollbar">
+                {[...NAV_ITEMS, ...TOOL_ITEMS].map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setActivePage(item.id)}
+                    className={classNames(
+                      "inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-xs font-semibold",
+                      activePage === item.id
+                        ? "border-blue-200 bg-blue-50 text-blue-700"
+                        : "border-gray-200 bg-white text-gray-500"
+                    )}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="mb-6">
-              <h1 className="text-2xl font-semibold text-gray-900">
+              <h1 className="admin-page-title text-2xl font-semibold text-gray-900">
                 {activePage === "dashboard"
                   ? "Dashboard"
                   : activePage === "products"
@@ -3865,8 +4426,8 @@ function App() {
 
       {newMessageOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
-            <div className="flex items-center justify-between">
+          <div className="admin-panel max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-6 shadow-xl">
+            <div className="flex items-center justify-between gap-3">
               <h3 className="text-lg font-semibold text-gray-900">New Message</h3>
               <button type="button" onClick={() => setNewMessageOpen(false)} className="text-gray-400">
                 x
@@ -3932,8 +4493,8 @@ function App() {
 
       {authModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
-            <div className="flex items-center justify-between">
+          <div className="admin-panel max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-6 shadow-xl">
+            <div className="flex items-center justify-between gap-3">
               <div>
                 <div className="mb-3 flex items-center gap-3">
                   <div className="h-10 w-10 overflow-hidden rounded-full bg-gray-100">

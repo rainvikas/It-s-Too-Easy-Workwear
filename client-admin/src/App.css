@@ -2,6 +2,24 @@
   min-height: 100vh;
 }
 
+.admin-app {
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+.admin-panel {
+  min-width: 0;
+}
+
+.admin-sidebar {
+  height: 100vh;
+}
+
+.admin-sidebar-scroll {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
 .no-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;
@@ -9,4 +27,73 @@
 
 .no-scrollbar::-webkit-scrollbar {
   display: none;
+}
+
+.admin-table-shell {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.admin-table-shell table {
+  min-width: 760px;
+}
+
+@media (max-width: 1023px) {
+  .admin-sidebar {
+    height: 100dvh;
+  }
+
+  .admin-main-shell {
+    padding: 7.75rem 0.9rem 1rem;
+  }
+
+  .admin-panel {
+    padding: 1rem;
+    border-radius: 1rem;
+  }
+
+  .admin-header-inner {
+    padding: 0.75rem 0.9rem;
+    gap: 0.65rem;
+  }
+
+  .admin-header-left {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .admin-header-search {
+    width: 100%;
+    max-width: none;
+  }
+
+  .admin-header-actions {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .admin-mobile-nav {
+    display: flex;
+    gap: 0.5rem;
+    overflow-x: auto;
+    padding-bottom: 0.35rem;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .admin-mobile-nav button {
+    white-space: nowrap;
+  }
+
+  .admin-page-title {
+    font-size: 1.35rem;
+    line-height: 1.2;
+  }
+}
+
+@media (min-width: 1024px) {
+  .admin-main-shell {
+    padding: 6rem 1.5rem 1.5rem;
+  }
 }
