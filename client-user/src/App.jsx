@@ -584,6 +584,70 @@ function App() {
   }, [profileForm, auth?.user?.name, auth?.user?.email]);
 
   const profileCompletion = Math.round(((4 - profileMissingFields.length) / 4) * 100);
+  const reviewAverage =
+    reviews.length > 0
+      ? (reviews.reduce((sum, review) => sum + Number(review.rating || 0), 0) / reviews.length).toFixed(1)
+      : "5.0";
+  const heroProducts = useMemo(() => products.slice(0, 4), [products]);
+  const heroPrimaryProduct = heroProducts[0] || null;
+  const collectionHighlights = useMemo(() => {
+    const availableCategories = categories.filter((item) => item !== "All");
+    return availableCategories.slice(0, 6).map((name, index) => {
+      const matches = products.filter((product) => product.category === name);
+      return {
+        name,
+        count: matches.length,
+        product: matches[0] || products[index] || null,
+      };
+    });
+  }, [categories, products]);
+  const latestDropProducts = useMemo(() => {
+    const source = filteredProducts.length ? filteredProducts : products;
+    return source.slice(0, 6);
+  }, [filteredProducts, products]);
+  const productSpotlight = latestDropProducts[0] || heroPrimaryProduct;
+  const pageMeta = {
+    home: {
+      eyebrow: "Storefront",
+      title: "Quiet utility pieces for daily rotation.",
+      description: "A cleaner home for catalog browsing, checkout, and after-sales support.",
+    },
+    shop: {
+      eyebrow: "Latest Drop",
+      title: "Browse the full workwear catalogue.",
+      description: `${filteredProducts.length} visible product${filteredProducts.length === 1 ? "" : "s"} with live filtering and saved-item support.`,
+    },
+    cart: {
+      eyebrow: "Checkout",
+      title: "Move from shortlist to shipment without friction.",
+      description: `Cart holds ${cartCount} item${cartCount === 1 ? "" : "s"} across direct checkout, bank transfer, and COD.`,
+    },
+    orders: {
+      eyebrow: "Tracking",
+      title: "Follow deliveries and manage service requests.",
+      description: `Track ${pendingOrdersCount} active order${pendingOrdersCount === 1 ? "" : "s"} and ${completedOrdersCount} completed order${completedOrdersCount === 1 ? "" : "s"} in one view.`,
+    },
+    reviews: {
+      eyebrow: "Social Proof",
+      title: "Let customers add public feedback without leaving the site.",
+      description: `The visible review feed currently averages ${reviewAverage} / 5.`,
+    },
+    support: {
+      eyebrow: "Live Help",
+      title: "Start a conversation with support in a quieter, clearer layout.",
+      description: chatSession.id
+        ? "Your support thread is active. Continue the conversation below."
+        : "Start a support thread for sizing, delivery, or order issues.",
+    },
+    account: {
+      eyebrow: "Profile",
+      title: auth?.token ? "Manage profile details and security settings." : "Sign in to unlock saved orders and profile tools.",
+      description: auth?.token
+        ? `${profileCompletion}% of the customer profile is filled in.`
+        : "Customer login keeps wishlist, orders, and profile details connected.",
+    },
+  };
+  const activePageMeta = pageMeta[activePage] || pageMeta.home;
 
   const addToCart = (productId) => {
     setCart((prev) => {
@@ -993,128 +1057,212 @@ function App() {
     localStorage.removeItem("userAuth");
   };
 
+  const browseCategory = (nextCategory) => {
+    setCategory(nextCategory || "All");
+    setActivePage("shop");
+  };
+
   return (
-    <div className="store-app min-h-screen text-slate-900">
-      <div className="ambient-orb orb-amber" />
-      <div className="ambient-orb orb-teal" />
+    <div className="store-app">
+      <div className="utility-strip">
+        <span>Fast dispatch</span>
+        <span>Tracked delivery updates</span>
+        <span>{paymentConfig.cardEnabled ? "Secure card checkout enabled" : "Bank transfer and COD available"}</span>
+      </div>
 
-      <div className="relative mx-auto flex h-screen max-w-[1500px] gap-4 overflow-hidden px-3 py-4 sm:px-5 lg:gap-6 lg:px-6 lg:py-6">
-        <aside className="hidden w-72 shrink-0 lg:block">
-          <div className="glass-panel side-panel h-full overflow-y-auto">
-            <div className="brand-block">
-              <p className="brand-kicker">Industrial Essentials</p>
-              <p className="brand-name">{BRAND_NAME}</p>
-              <p className="brand-subtitle">Built for warehouses, workshops, and crews that move fast.</p>
-            </div>
-
-            <div className="side-nav">
-              {NAV_ITEMS.map((item) => (
-                <button
-                  key={item.id}
-                  onClick={() => setActivePage(item.id)}
-                  className={cx("nav-btn", activePage === item.id && "is-active")}
-                >
-                  <span>{item.label}</span>
-                  {counters[item.id] ? <span className="nav-badge">{counters[item.id]}</span> : null}
-                </button>
-              ))}
-            </div>
-
-            <div className="account-chip mt-auto">
-              <p className="text-sm font-semibold text-slate-900">{auth?.user?.name || "Guest User"}</p>
-              <p className="text-xs text-slate-500">{auth?.user?.email || "Not signed in"}</p>
-            </div>
+      <div className="site-shell">
+        <header className="site-header">
+          <button type="button" className="brand-mark" onClick={() => setActivePage("home")} aria-label={`${BRAND_NAME} home`}>
+            ITE
+          </button>
+          <div className="brand-copy">
+            <p className="brand-kicker">Client User Storefront</p>
+            <p className="brand-name">{BRAND_NAME}</p>
+            <p className="brand-subtitle">Minimal workwear essentials for crews, warehouses, and workshop teams.</p>
           </div>
-        </aside>
 
-        <main className="flex min-h-0 flex-1 flex-col gap-4 pt-3">
-          <header
-            className="glass-panel top-shell z-40"
-            style={{
-              background: "rgba(255, 252, 246, 0.97)",
-              backdropFilter: "blur(16px)",
-              WebkitBackdropFilter: "blur(16px)",
-            }}
-          >
-            <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-              <div>
-                <p className="hero-kicker">Workwear Storefront</p>
-                <h1 className="hero-title">Outfit your team with confidence.</h1>
+          <div className="header-actions">
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search products"
+              className="field-input search-input"
+            />
+            <button onClick={() => setActivePage("cart")} className="pill-btn">
+              Bag ({cartCount})
+            </button>
+            {auth ? (
+              <button onClick={logout} className="pill-btn">
+                Logout
+              </button>
+            ) : (
+              <button onClick={() => setAuthModalOpen(true)} className="primary-btn compact">
+                Login / Register
+              </button>
+            )}
+          </div>
+        </header>
+
+        <nav className="header-nav">
+          {NAV_ITEMS.map((item) => (
+            <button
+              key={item.id}
+              onClick={() => setActivePage(item.id)}
+              className={cx("nav-btn nav-btn-mobile", activePage === item.id && "is-active")}
+            >
+              <span>{item.label}</span>
+              {counters[item.id] ? <span className="nav-badge">{counters[item.id]}</span> : null}
+            </button>
+          ))}
+        </nav>
+
+        {activePage !== "home" && (
+          <section className="page-intro card-reveal">
+            <div>
+              <p className="hero-kicker">{activePageMeta.eyebrow}</p>
+              <h1 className="page-title">{activePageMeta.title}</h1>
+              <p className="page-helper">{activePageMeta.description}</p>
+            </div>
+            <div className="page-intro-meta">
+              <div className="metric-card compact">
+                <p className="metric-label">Cart</p>
+                <p className="metric-value">{cartCount}</p>
               </div>
-
-              <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center xl:w-auto">
-                <input
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search products"
-                  className="field-input w-full sm:w-72"
-                />
-                <div className="flex gap-2">
-                  <button onClick={() => setActivePage("cart")} className="pill-btn">
-                    Cart ({cartCount})
-                  </button>
-                  {auth ? (
-                    <button onClick={logout} className="pill-btn">
-                      Logout
-                    </button>
-                  ) : (
-                    <button onClick={() => setAuthModalOpen(true)} className="primary-btn compact">
-                      Login / Register
-                    </button>
-                  )}
-                </div>
+              <div className="metric-card compact">
+                <p className="metric-label">Wishlist</p>
+                <p className="metric-value">{wishlistProducts.length}</p>
+              </div>
+              <div className="metric-card compact">
+                <p className="metric-label">Orders</p>
+                <p className="metric-value">{orders.length}</p>
               </div>
             </div>
+          </section>
+        )}
 
-            <div className="mt-4 flex gap-2 overflow-x-auto pb-1 lg:hidden">
-              {NAV_ITEMS.map((item) => (
-                <button
-                  key={item.id}
-                  onClick={() => setActivePage(item.id)}
-                  className={cx("nav-btn nav-btn-mobile whitespace-nowrap", activePage === item.id && "is-active")}
-                >
-                  <span>{item.label}</span>
-                  {counters[item.id] ? <span className="nav-badge">{counters[item.id]}</span> : null}
-                </button>
-              ))}
-            </div>
-          </header>
-
-          <div className="min-h-0 flex-1 overflow-y-auto pb-2 pr-1">
-            <section className="glass-panel page-shell">
-            <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-              <h2 className="page-title">{NAV_ITEMS.find((item) => item.id === activePage)?.label || "Home"}</h2>
-              <p className="page-helper">Live catalog, quick checkout, and full customer support in one flow.</p>
-            </div>
+        <section className="page-shell">
 
             {activePage === "home" && (
               <div className="space-y-4">
                 <article className="home-hero card-reveal">
-                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Welcome</p>
-                  <h3 className="mt-1 text-2xl font-semibold text-slate-900">
-                    {auth?.user?.name ? `Good to see you, ${auth.user.name}.` : "Get equipped for your next shift."}
-                  </h3>
-                  <p className="mt-2 text-sm text-slate-600">
-                    Jump back into your journey quickly: shop products, finish checkout, track deliveries, or contact support.
-                  </p>
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    <button type="button" onClick={() => setActivePage("shop")} className="primary-btn">
-                      Shop Products
-                    </button>
-                    <button type="button" onClick={() => setActivePage("shop")} className="secondary-btn">
-                      Wishlist ({wishlistProducts.length})
-                    </button>
-                    <button type="button" onClick={() => setActivePage("cart")} className="secondary-btn">
-                      Continue Checkout ({cartCount})
-                    </button>
-                    <button type="button" onClick={openOrdersPage} className="secondary-btn">
-                      Track My Orders
-                    </button>
-                    <button type="button" onClick={() => setActivePage("support")} className="secondary-btn">
-                      Chat Support
-                    </button>
+                  <div className="home-hero-grid">
+                    <div className="home-hero-copy">
+                      <p className="hero-kicker">New Season</p>
+                      <h1 className="hero-title-xl">
+                        {auth?.user?.name
+                          ? `Welcome back, ${auth.user.name}.`
+                          : "Quiet workwear essentials with a cleaner storefront rhythm."}
+                      </h1>
+                      <p className="mt-3 text-sm text-slate-600">
+                        A calmer monochrome UI, larger product imagery, and direct routes into shopping, checkout, tracking, and support.
+                      </p>
+                      <div className="mt-5 flex flex-wrap gap-2">
+                        <button type="button" onClick={() => setActivePage("shop")} className="primary-btn">
+                          Shop Products
+                        </button>
+                        <button type="button" onClick={openOrdersPage} className="secondary-btn">
+                          Track Orders
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => (auth ? setActivePage("account") : setAuthModalOpen(true))}
+                          className="secondary-btn"
+                        >
+                          {auth ? "Open Account" : "Login / Register"}
+                        </button>
+                      </div>
+                      <div className="home-hero-metrics">
+                        <div className="metric-card compact">
+                          <p className="metric-label">Products</p>
+                          <p className="metric-value">{products.length}</p>
+                        </div>
+                        <div className="metric-card compact">
+                          <p className="metric-label">Wishlist</p>
+                          <p className="metric-value">{wishlistProducts.length}</p>
+                        </div>
+                        <div className="metric-card compact">
+                          <p className="metric-label">Orders</p>
+                          <p className="metric-value">{pendingOrdersCount}</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="home-hero-visual">
+                      {heroPrimaryProduct ? (
+                        <button type="button" className="hero-product-card" onClick={() => openProductDetails(heroPrimaryProduct)}>
+                          <img src={imageUrl(heroPrimaryProduct.imageUrl)} alt={heroPrimaryProduct.title} className="hero-product-image" />
+                          <div className="hero-product-copy">
+                            <p className="product-category">{heroPrimaryProduct.category || "Featured"}</p>
+                            <h3>{heroPrimaryProduct.title}</h3>
+                            <p>{price(heroPrimaryProduct.price)}</p>
+                          </div>
+                        </button>
+                      ) : (
+                        <div className="hero-product-card hero-product-card-empty">Catalog syncing...</div>
+                      )}
+                    </div>
                   </div>
                 </article>
+
+                <div className="collection-grid">
+                  {collectionHighlights.map((collection, index) => (
+                    <button
+                      key={collection.name}
+                      type="button"
+                      className="collection-card card-reveal"
+                      style={{ animationDelay: `${Math.min(index * 45, 180)}ms` }}
+                      onClick={() => browseCategory(collection.name)}
+                    >
+                      {collection.product ? (
+                        <img src={imageUrl(collection.product.imageUrl)} alt={collection.product.title} className="collection-image" />
+                      ) : (
+                        <div className="collection-placeholder" />
+                      )}
+                      <div className="collection-copy">
+                        <p className="hero-kicker">
+                          {String(collection.count).padStart(2, "0")} product{collection.count === 1 ? "" : "s"}
+                        </p>
+                        <h3>{collection.name}</h3>
+                        <p>Cleanly grouped styles for faster browsing and quicker repeat orders.</p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="latest-drop-panel card-reveal" style={{ animationDelay: "60ms" }}>
+                  <div className="flex flex-wrap items-end justify-between gap-3">
+                    <div>
+                      <p className="hero-kicker">Latest Drop</p>
+                      <h3 className="section-title">Spacious product presentation with fewer distractions.</h3>
+                    </div>
+                    <button type="button" onClick={() => setActivePage("shop")} className="secondary-btn">
+                      View Full Catalog
+                    </button>
+                  </div>
+                  <div className="latest-drop-grid">
+                    {latestDropProducts.slice(0, 4).map((product) => (
+                      <article key={product._id} className="product-card">
+                        <img src={imageUrl(product.imageUrl)} alt={product.title} className="product-image" />
+                        <div className="p-4">
+                          <p className="product-category">{product.category || "Workwear"}</p>
+                          <h3 className="mt-1 text-base font-semibold text-slate-900">{product.title}</h3>
+                          <div className="mt-4 flex items-center justify-between gap-2">
+                            <span className="price-chip">{price(product.price)}</span>
+                            <div className="flex gap-2">
+                              <button type="button" onClick={() => openProductDetails(product)} className="secondary-btn !px-3 !py-1.5 text-xs">
+                                View
+                              </button>
+                              <button type="button" onClick={() => addToCart(product._id)} className="primary-btn !px-3 !py-1.5 text-xs">
+                                Add
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </article>
+                    ))}
+                    {!latestDropProducts.length && !productsLoading && <p className="empty-note md:col-span-2">No products available yet.</p>}
+                  </div>
+                </div>
 
                 <div className="grid gap-4 lg:grid-cols-[1.2fr,1fr]">
                   <article className="form-card card-reveal" style={{ animationDelay: "70ms" }}>
@@ -1912,9 +2060,7 @@ function App() {
                 )}
               </>
             )}
-            </section>
-          </div>
-        </main>
+        </section>
       </div>
 
       {selectedProduct && (
